@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+data/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+
+# Secrets — keep the example, never commit the real config
+config.yaml
+
+# Build artifacts — keep the C/C++/Swift sources, not the compiled binaries / debug symbols
+*.dSYM/
+pixcut-probe/probe
+pixcut-probe/bt_send
+pixcut-probe/click
+pixcut-probe/axenable
+pixcut-probe/usb_send
+pixcut-probe/usb_print
+pixcut-probe/usb_probe
+pixcut-probe/usb_combo
+pixcut-probe/usb_mp
+pixcut-probe/trigger_sr
+pixcut-probe/trigger_sck
+data/.pixcut_print_count

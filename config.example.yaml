@@ -1,0 +1,65 @@
+# Copy to config.yaml and fill in your secrets. config.yaml is gitignored.
+comfyui:
+  comfyui_url: http://127.0.0.1:8188
+  comfyui_api_key: null
+  runninghub_api_key: YOUR_RUNNINGHUB_API_KEY
+  runninghub_concurrent_limit: 1
+  runninghub_instance_type: null
+
+generation:
+  backend: mock                 # mock | runninghub
+  runninghub:
+    base_url: https://www.runninghub.cn
+    workflow_id: ""
+    poll_interval_sec: 3
+    timeout_sec: 240
+    input_image_node_id: ""
+    seed_node_id: ""
+    prompt_node_id: ""
+
+camera:
+  device_index: 0
+  frame_width: 1280
+  frame_height: 720
+  fps_limit: 8
+
+recognition:
+  model_pack: buffalo_l
+  providers: [CPUExecutionProvider]
+  ctx_id: -1
+  det_size: 640
+  match_threshold: 0.45
+  min_face_px: 90
+  recognize_interval_sec: 0.4
+
+orchestration:
+  debounce_sec: 5
+  daily_limit: 1
+  gallery_reload_sec: 10
+
+server:
+  host: 127.0.0.1
+  port: 8000
+
+printing:
+  enabled: false                # auto-print after generation (manual /api/print ignores this)
+  backend: lp                   # lp = CUPS system printer | pixcut = Liene-app UI automation
+  printer_name: ""              # lp only; empty = system default (list: lpstat -p)
+  pixcut:                       # backend=pixcut only (drives pixcut-probe/print_via_app.sh)
+    script: pixcut-probe/print_via_app.sh
+    dry_run: false              # DEBUG: run whole flow but never click 切割 (no print/ribbon), log success
+    cutout: false               # apply AI抠图 die-cut each print (uses a trial credit)
+    fresh: true                 # navigate Home->blank 4x7 canvas each print (robust)
+    margin_in: 0.0
+    timeout_sec: 300
+    restart_every: 10           # restart Liene app every N prints to clear 画板 tabs (0 = never)
+
+storage:
+  data_dir: ./data
+  history_retention_days: 3     # purge generation history + images older than N days
+
+logging:                        # rotating file logs under data_dir/logs, self-cleaning
+  level: INFO
+  max_bytes: 5000000            # rotate each log file at ~5MB
+  backup_count: 5               # keep N rotations (~25MB hard cap); oldest auto-deleted
+  retention_days: 7             # also prune *.log* older than N days on startup (0 = off)

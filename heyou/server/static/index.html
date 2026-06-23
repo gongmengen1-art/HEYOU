@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HEYOU · 控制台</title>
+<style>
+  :root{
+    --bg:#0a0a10; --panel:rgba(255,255,255,.045); --panel2:rgba(255,255,255,.06);
+    --line:rgba(255,255,255,.10); --txt:#edeef6; --mut:#8a8a9e;
+    --neon:#ff2d95; --neon2:#19e3ff; --ok:#34e0a1; --warn:#ffc24b; --bad:#ff5c6c;
+    --r:16px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    font-family:-apple-system,system-ui,"PingFang SC",sans-serif;color:var(--txt);
+    background:
+      radial-gradient(1100px 600px at 10% -10%, rgba(255,45,149,.16), transparent 60%),
+      radial-gradient(1000px 560px at 100% 0%, rgba(25,227,255,.12), transparent 55%),
+      var(--bg);
+    min-height:100%;
+  }
+  .wrap{max-width:1060px;margin:0 auto;padding:22px 18px 70px}
+  /* top bar */
+  .top{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+  .brand{font-size:20px;font-weight:800;letter-spacing:.3px}
+  .brand .dot{color:var(--neon)}
+  .chips{display:flex;gap:10px;margin-left:auto;flex-wrap:wrap}
+  .chip{font-size:12.5px;color:var(--mut);background:var(--panel);border:1px solid var(--line);
+    padding:7px 12px;border-radius:999px;display:flex;gap:8px;align-items:center}
+  .chip b{color:var(--txt);font-weight:600}
+  .sdot{width:8px;height:8px;border-radius:50%;flex:none;transition:.3s}
+  .sdot.ok{background:var(--ok);box-shadow:0 0 9px var(--ok)}
+  .sdot.warn{background:var(--warn);box-shadow:0 0 9px var(--warn)}
+  .sdot.bad{background:var(--bad);box-shadow:0 0 9px var(--bad)}
+  .sdot.off{background:var(--mut)}
+  .chipbtn{margin-left:6px;padding:3px 11px;font-size:11px;font-weight:600;border-radius:8px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--txt);box-shadow:none}
+  .chipbtn:hover{background:rgba(255,255,255,.13);transform:none;filter:none}
+  /* tabs */
+  .tabs{display:flex;gap:8px;margin-bottom:20px}
+  .tab{cursor:pointer;padding:10px 18px;border-radius:12px;font-size:14px;color:var(--mut);
+    border:1px solid transparent;user-select:none;transition:.2s}
+  .tab:hover{color:var(--txt);background:var(--panel)}
+  .tab.active{color:#fff;background:linear-gradient(135deg,rgba(255,45,149,.24),rgba(25,227,255,.18));
+    border-color:var(--line);box-shadow:0 8px 28px -14px rgba(255,45,149,.8)}
+  /* panel */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:22px;
+    backdrop-filter:blur(12px);box-shadow:0 26px 70px -46px #000;animation:fade .35s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  h2{margin:0 0 6px;font-size:16px;font-weight:700}
+  .sub{color:var(--mut);font-size:12.5px;margin:0 0 18px}
+  label{display:block;font-size:12px;color:var(--mut);margin:14px 0 7px;font-weight:600;letter-spacing:.3px}
+  input[type=text]{width:100%;padding:13px 15px;border-radius:12px;border:1px solid var(--line);
+    background:rgba(0,0,0,.28);color:var(--txt);font-size:14px;outline:none;transition:.2s}
+  input[type=text]:focus{border-color:var(--neon);box-shadow:0 0 0 3px rgba(255,45,149,.16)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  /* buttons */
+  button{cursor:pointer;border:0;border-radius:12px;padding:12px 20px;font-size:14px;font-weight:600;color:#fff;
+    background:linear-gradient(135deg,var(--neon),#c11f7e);transition:transform .12s,filter .2s,box-shadow .2s;
+    box-shadow:0 10px 24px -14px rgba(255,45,149,.9)}
+  button:hover{filter:brightness(1.08);transform:translateY(-1px)}
+  button:active{transform:translateY(0)}
+  button:disabled{opacity:.5;cursor:default;filter:none;transform:none;box-shadow:none}
+  button.ghost{background:var(--panel2);color:var(--txt);border:1px solid var(--line);box-shadow:none}
+  button.ghost:hover{background:rgba(255,255,255,.10)}
+  button.cyan{background:linear-gradient(135deg,var(--neon2),#0fa6cc);color:#03222b;box-shadow:0 10px 24px -14px rgba(25,227,255,.8)}
+  button.danger{background:rgba(255,92,108,.12);color:var(--bad);border:1px solid rgba(255,92,108,.35);box-shadow:none}
+  button.danger:hover{background:rgba(255,92,108,.2)}
+  button.sm{padding:8px 12px;font-size:12.5px}
+  button.block{width:100%}
+  /* uploader */
+  .uploader{position:relative;width:100%;max-width:360px;aspect-ratio:4/3;border:1.5px dashed var(--line);
+    border-radius:14px;overflow:hidden;display:grid;place-items:center;cursor:pointer;
+    background:rgba(0,0,0,.22);transition:.2s}
+  .uploader:hover,.uploader.drag{border-color:var(--neon);background:rgba(255,45,149,.06)}
+  .uploader video,.uploader img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .uploader .hint{text-align:center;color:var(--mut);font-size:13px;padding:18px;pointer-events:none}
+  .uploader .hint .ico{font-size:30px;margin-bottom:8px}
+  #msg{font-size:13px;min-height:18px}
+  /* people grid */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(206px,1fr));gap:16px}
+  .pcard{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:13px;
+    transition:transform .15s,box-shadow .2s;animation:fade .3s ease}
+  .pcard:hover{transform:translateY(-3px);box-shadow:0 18px 40px -26px #000}
+  .imgs{display:flex;gap:8px}
+  .imgs .cell{flex:1;position:relative;border-radius:10px;overflow:hidden;background:#000;border:1px solid var(--line)}
+  .imgs .cell img{width:100%;height:142px;object-fit:cover;display:block}
+  .imgs .cell .tag{position:absolute;left:6px;bottom:6px;font-size:10px;padding:2px 7px;border-radius:6px;
+    background:rgba(0,0,0,.55);color:#fff;backdrop-filter:blur(4px)}
+  .nm{font-weight:700;margin:10px 0 2px;font-size:15px}
+  .meta{font-size:11px;color:var(--mut);min-height:14px}
+  .acts{margin-top:11px;display:flex;flex-direction:column;gap:7px}
+  .acts .line{display:flex;gap:7px}
+  .acts .line button{flex:1}
+  .state .spin{width:13px;height:13px;border-width:2px;margin-right:6px;vertical-align:-2px;display:inline-block}
+  .empty{color:var(--mut);font-size:13px;padding:14px}
+  /* pagination */
+  .pager{display:flex;justify-content:center;align-items:center;gap:14px;margin-top:20px;color:var(--mut);font-size:13px}
+  .pager button{padding:8px 14px}
+  /* spinner */
+  .spin{width:20px;height:20px;border-radius:50%;border:3px solid rgba(255,255,255,.18);
+    border-top-color:var(--neon);animation:s .8s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  /* badge */
+  .badge{font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
+  .b-ok{color:var(--ok);background:rgba(52,224,161,.12)}
+  .b-print{color:var(--neon2);background:rgba(25,227,255,.12)}
+  .b-bad{color:var(--bad);background:rgba(255,92,108,.12)}
+  /* modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);
+    display:grid;place-items:center;z-index:20;animation:fade .2s ease;padding:18px}
+  .modal{background:#13131c;border:1px solid var(--line);border-radius:18px;width:min(680px,96vw);
+    max-height:84vh;overflow:auto;padding:22px;animation:pop .22s cubic-bezier(.2,.9,.3,1.2)}
+  @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+  .modal .mhead{display:flex;align-items:center;margin-bottom:16px}
+  .modal .mhead h2{margin:0}
+  .modal .x{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    width:34px;height:34px;border-radius:10px;padding:0;font-size:18px}
+  .hgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
+  .hitem{background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .hitem img{width:100%;height:120px;object-fit:cover;display:block;background:#000}
+  .hitem .ph{height:120px;display:grid;place-items:center;color:var(--mut);font-size:12px}
+  .hitem .cap{padding:8px 10px;font-size:11px;color:var(--mut);display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .hide{display:none}
+  /* toast */
+  #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);opacity:0;
+    background:#16161f;border:1px solid var(--line);color:#fff;padding:13px 20px;border-radius:12px;
+    transition:.25s;font-size:14px;box-shadow:0 22px 54px -22px #000;z-index:30}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">🍸 HEY<span class="dot">OU</span> 控制台</div>
+    <div class="chips">
+      <div class="chip" id="chip-recognition"><span class="sdot bad"></span>识别 <b>…</b></div>
+      <div class="chip" id="chip-engine"><span class="sdot bad"></span>引擎 <b>…</b></div>
+      <div class="chip" id="chip-printer"><span class="sdot bad"></span>打印机 <b>…</b></div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-view="enroll">＋ 录入</div>
+    <div class="tab" data-view="people">熟客管理</div>
+  </div>
+
+  <!-- 录入 -->
+  <section id="view-enroll" class="view">
+    <div class="panel" style="max-width:520px">
+      <h2>录入新熟客</h2>
+      <div class="sub">上传或拖拽一张清晰正脸照，也可用摄像头拍一张。</div>
+      <label>姓名 / 备注</label>
+      <input type="text" id="name" placeholder="例如：老王" autocomplete="off" />
+      <label>照片</label>
+      <div class="uploader" id="drop">
+        <input type="file" id="file" accept="image/*" hidden />
+        <video id="cam" class="hide" autoplay playsinline muted></video>
+        <img id="preview" class="hide" />
+        <div class="hint" id="hint"><div class="ico">📸</div><div>点击 / 拖拽照片到这里</div><div style="margin-top:4px;opacity:.7">或用下方按钮拍照</div></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="ghost sm" id="pick" type="button">选择照片</button>
+        <button class="ghost sm" id="startCam" type="button">打开摄像头</button>
+        <button class="ghost sm" id="snap" type="button" disabled>拍照</button>
+        <button class="ghost sm" id="clearPhoto" type="button" disabled>清除</button>
+      </div>
+      <div class="row" style="margin-top:18px">
+        <button id="enroll" type="button">录入熟客</button>
+        <span id="msg"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 熟客 -->
+  <section id="view-people" class="view hide">
+    <div class="panel">
+      <h2>熟客管理</h2>
+      <div class="sub">「立即生成 / 重新生成」可不靠摄像头当场出图；「生成历史」查看近 N 天记录。</div>
+      <div class="grid" id="people"></div>
+      <div class="pager hide" id="pager">
+        <button class="ghost sm" id="prev">‹ 上一页</button>
+        <span id="pageinfo">第 1 / 1 页</span>
+        <button class="ghost sm" id="next">下一页 ›</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="toast"></div>
+<div id="modal" class="modal-bg hide"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let photoFile=null, camStream=null, page=1, lastPeopleJson='', recognitionPaused=false;
+async function pauseRec(){ try{ await fetch('/api/recognition/pause',{method:'POST'}); recognitionPaused=true; }catch(e){} }
+async function resumeRec(){ if(!recognitionPaused) return; recognitionPaused=false; try{ await fetch('/api/recognition/resume',{method:'POST'}); }catch(e){} }
+
+/* nav */
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  stopCam();
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===t));
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('hide',v.id!=='view-'+t.dataset.view));
+  if(t.dataset.view==='people'){ lastPeopleJson=''; loadPeople(); }
+});
+function show(v){ document.querySelector('.tab[data-view="'+v+'"]').click(); }
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),2800); }
+function setMsg(t,err){ const m=$('#msg'); m.textContent=t; m.style.color=err?'var(--bad)':'var(--ok)'; }
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+/* ---------- enroll: uploader ---------- */
+function stopCam(){ if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; } $('#cam').classList.add('hide'); $('#snap').disabled=true; resumeRec(); }
+function setPhoto(f){
+  photoFile=f; stopCam();
+  const u=URL.createObjectURL(f); $('#preview').src=u; $('#preview').classList.remove('hide');
+  $('#hint').classList.add('hide'); $('#clearPhoto').disabled=false;
+}
+$('#pick').onclick=()=>$('#file').click();
+$('#drop').onclick=e=>{ if(e.target.tagName!=='VIDEO') $('#file').click(); };
+$('#file').onchange=e=>{ if(e.target.files[0]) setPhoto(e.target.files[0]); };
+['dragover','dragenter'].forEach(ev=>$('#drop').addEventListener(ev,e=>{e.preventDefault();$('#drop').classList.add('drag');}));
+['dragleave','drop'].forEach(ev=>$('#drop').addEventListener(ev,e=>{e.preventDefault();$('#drop').classList.remove('drag');}));
+$('#drop').addEventListener('drop',e=>{ const f=e.dataTransfer.files[0]; if(f) setPhoto(f); });
+$('#clearPhoto').onclick=()=>{ photoFile=null; $('#preview').classList.add('hide'); $('#hint').classList.remove('hide'); $('#clearPhoto').disabled=true; $('#file').value=''; };
+$('#startCam').onclick=async()=>{
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)
+    return setMsg('此环境不支持摄像头（多半是 IDE 内置预览）。请用 Safari/Chrome 打开，或直接上传文件。',true);
+  setMsg('正在暂停识别、释放摄像头…'); await pauseRec(); await sleep(500);
+  try{
+    camStream=await navigator.mediaDevices.getUserMedia({video:true});
+    const v=$('#cam'); v.srcObject=camStream; v.classList.remove('hide');
+    $('#preview').classList.add('hide'); $('#hint').classList.add('hide'); $('#snap').disabled=false; setMsg('摄像头已打开（识别已暂停），点"拍照"。');
+  }catch(e){
+    resumeRec();
+    let h=e.message;
+    if(e.name==='NotAllowedError') h='浏览器未授权：请用 Safari/Chrome（非 IDE 预览）并允许摄像头，或直接上传文件。';
+    else if(e.name==='NotReadableError'||e.name==='AbortError') h='摄像头仍被占用，请稍候重试，或直接上传文件。';
+    setMsg('无法打开摄像头：'+h,true);
+  }
+};
+$('#snap').onclick=()=>{
+  const v=$('#cam'),c=document.createElement('canvas'); c.width=v.videoWidth||640; c.height=v.videoHeight||480;
+  c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+  c.toBlob(b=>setPhoto(b),'image/jpeg',.92);
+};
+$('#enroll').onclick=async()=>{
+  const name=$('#name').value.trim();
+  if(!name) return setMsg('请填写姓名',true);
+  if(!photoFile) return setMsg('请上传或拍一张照片',true);
+  const fd=new FormData(); fd.append('name',name); fd.append('file',photoFile,'photo.jpg');
+  $('#enroll').disabled=true; setMsg('识别人脸中…');
+  try{
+    const r=await fetch('/api/enroll',{method:'POST',body:fd}); const j=await r.json();
+    if(!r.ok) throw new Error(j.detail||'失败');
+    setMsg('已录入 '+j.name+' ✓'); toast('已录入 '+j.name);
+    $('#name').value=''; $('#clearPhoto').click();
+  }catch(e){ setMsg(e.message,true); }
+  finally{ $('#enroll').disabled=false; }
+};
+
+/* ---------- people ---------- */
+const SBADGE={generated:['b-ok','已生成'],printed:['b-print','已打印'],print_failed:['b-bad','打印失败'],failed:['b-bad','失败'],reprinted:['b-print','已补打'],reprint_failed:['b-bad','补打失败']};
+
+async function loadPeople(){
+  let d; try{ d=await (await fetch('/api/people?page='+page)).json(); }catch(e){ return; }
+  const key=JSON.stringify(d); if(key===lastPeopleJson) return; lastPeopleJson=key;
+  page=d.page;
+  const box=$('#people');
+  if(!d.items.length){ box.innerHTML='<div class="empty">暂无录入，先去「录入」加一位熟客。</div>'; $('#pager').classList.add('hide'); return; }
+  box.innerHTML=d.items.map(cardHTML).join('');
+  $('#pager').classList.toggle('hide', d.pages<=1);
+  $('#pageinfo').textContent=`第 ${d.page} / ${d.pages} 页`;
+  $('#prev').disabled=d.page<=1; $('#next').disabled=d.page>=d.pages;
+}
+function cardHTML(p){
+  const showToon = p.generated_today && p.last_output;
+  const imgs = showToon
+    ? `<div class="cell"><img src="/api/photo/${p.id}"><span class="tag">本人</span></div>
+       <div class="cell"><img src="/api/output/${p.last_output}"><span class="tag">卡通</span></div>`
+    : `<div class="cell"><img src="/api/photo/${p.id}"></div>`;
+  let stateBtn;
+  if(p.generating) stateBtn=`<button class="state block" disabled><span class="spin"></span>生成中…</button>`;
+  else if(p.generated_today) stateBtn=`<button class="state cyan block" data-gen="${p.id}">重新生成</button>`;
+  else stateBtn=`<button class="state block" data-gen="${p.id}">立即生成</button>`;
+  return `<div class="pcard">
+    <div class="imgs">${imgs}</div>
+    <div class="nm">${esc(p.name)}</div>
+    <div class="meta">${p.last_print_date?'上次 '+p.last_print_date:'今日未生成'}</div>
+    <div class="acts">
+      ${stateBtn}
+      <div class="line">
+        <button class="cyan sm" data-print="${p.id}"${p.last_output?'':' disabled'}>打印</button>
+        <button class="ghost sm" data-hist="${p.id}" data-name="${esc(p.name)}">历史</button>
+        <button class="danger sm" data-del="${p.id}">删除</button>
+      </div>
+    </div>
+  </div>`;
+}
+$('#people').onclick=async e=>{
+  const gen=e.target.closest('[data-gen]'), prn=e.target.closest('[data-print]'), hist=e.target.closest('[data-hist]'), del=e.target.closest('[data-del]');
+  if(gen){
+    gen.disabled=true; gen.innerHTML='<span class="spin"></span>生成中…';
+    try{ const r=await fetch('/api/generate/'+gen.dataset.gen,{method:'POST'}); const j=await r.json();
+      toast(j.already?'该熟客正在生成中…':'已为 '+j.name+' 排单 · 约 2 分钟出图'); lastPeopleJson=''; loadPeople();
+    }catch(err){ toast('生成失败'); gen.disabled=false; }
+  }
+  if(prn){
+    prn.disabled=true; const t0=prn.textContent; prn.textContent='打印中…';
+    try{ const r=await fetch('/api/print/'+prn.dataset.print,{method:'POST'}); const j=await r.json();
+      if(!r.ok) throw new Error(j.detail||'打印失败'); toast('已发送打印 ✓');
+    }catch(err){ toast('打印失败：'+err.message); }
+    finally{ prn.disabled=false; prn.textContent=t0; }
+  }
+  if(hist) openHistory(hist.dataset.hist, hist.dataset.name);
+  if(del){ if(!confirm('确认删除该熟客？')) return; await fetch('/api/people/'+del.dataset.del,{method:'DELETE'}); lastPeopleJson=''; loadPeople(); }
+};
+$('#prev').onclick=()=>{ if(page>1){page--; lastPeopleJson=''; loadPeople();} };
+$('#next').onclick=()=>{ page++; lastPeopleJson=''; loadPeople(); };
+
+/* ---------- history modal ---------- */
+async function openHistory(pid,name){
+  const m=$('#modal'); m.classList.remove('hide');
+  m.innerHTML=`<div class="modal"><div class="mhead"><h2>${esc(name)} · 生成历史</h2><button class="x" onclick="closeModal()">✕</button></div><div id="hbody"><div class="empty">加载中…</div></div></div>`;
+  m.onclick=e=>{ if(e.target===m) closeModal(); };
+  let list=[]; try{ list=await (await fetch('/api/history/'+pid)).json(); }catch(e){}
+  const body=$('#hbody');
+  if(!list.length){ body.innerHTML='<div class="empty">近几天暂无生成记录。</div>'; return; }
+  body.innerHTML='<div class="hgrid">'+list.map(h=>{
+    const b=SBADGE[h.status]||['b-bad',h.status];
+    const img=h.output?`<img src="/api/output/${h.output}">`:`<div class="ph">无图</div>`;
+    return `<div class="hitem">${img}<div class="cap"><span>${esc((h.ts||'').replace('T',' ').slice(5,16))}</span><span class="badge ${b[0]}">${b[1]}</span></div></div>`;
+  }).join('')+'</div>';
+}
+function closeModal(){ $('#modal').classList.add('hide'); $('#modal').innerHTML=''; }
+
+/* ---------- status chips ---------- */
+async function refreshStatus(){
+  let s; try{ s=await (await fetch('/api/status')).json(); }catch(e){ return; }
+  const rc=s.recognition||{status:'disabled'};
+  const RMAP={running:['ok','在线'],starting:['warn','启动中…'],paused:['warn','已暂停'],off:['off','已关闭'],error:['bad','异常'],stopped:['bad','离线'],disabled:['bad','未启用']};
+  const rm=RMAP[rc.status]||['bad',rc.status];
+  const recBtn = rc.status==='disabled' ? '' : `<button class="chipbtn" id="rec-toggle">${rc.enabled?'关闭':'开启'}</button>`;
+  $('#chip-recognition').innerHTML=`<span class="sdot ${rm[0]}"></span>识别 <b>${rm[1]}</b>${recBtn}`;
+  const _tb=$('#rec-toggle');
+  if(_tb) _tb.onclick=async(ev)=>{ ev.stopPropagation(); _tb.disabled=true; try{ await fetch('/api/recognition/'+(rc.enabled?'stop':'start'),{method:'POST'}); }catch(e){} refreshStatus(); };
+  const e=s.engine, eDot=e.connected?'ok':'bad';
+  $('#chip-engine').innerHTML=`<span class="sdot ${eDot}"></span>引擎 <b>${e.name==='runninghub'?'RunningHub':e.name}</b> · ${e.connected?'已连接':'连接异常'}`;
+  const p=s.printer, pDot=!p.connected?'bad':(p.ok?'ok':'warn');
+  $('#chip-printer').innerHTML=`<span class="sdot ${pDot}"></span>打印机 <b>${p.connected?esc(p.state):'未连接'}</b>`;
+}
+
+/* ---------- loop ---------- */
+window.addEventListener('beforeunload',()=>{ if(recognitionPaused) navigator.sendBeacon('/api/recognition/resume'); });
+function tick(){ refreshStatus(); if(!$('#view-people').classList.contains('hide')) loadPeople(); }
+refreshStatus(); setInterval(tick,4000);
+</script>
+</body>
+</html>
