@@ -17,6 +17,11 @@ dependencies = [
     "pydantic>=2.6",
     # Windows-only: system-printer backend (win32print + GDI). Not installed on mac/Linux.
     "pywin32>=306 ; sys_platform == 'win32'",
+    # Windows-only: Liene-app UI automation (PixCut backend port of the macOS script).
+    "pyautogui>=0.9.54 ; sys_platform == 'win32'",
+    "pygetwindow>=0.0.9 ; sys_platform == 'win32'",
+    "pyperclip>=1.8 ; sys_platform == 'win32'",
+    "psutil>=5.9 ; sys_platform == 'win32'",
 ]
 
 [tool.uv]
