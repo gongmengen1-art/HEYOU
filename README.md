@@ -25,6 +25,7 @@
 
 ## 📋 最近更新
 
+- ✅ **2026-06-29** **Windows 10 支持**：同一套跨平台代码库,打印后端按系统自动选择——Windows 走系统打印机(`win32print`),macOS 仍可用 PixCut UI 自动化;摄像头在 Windows 用 DirectShow。详见 [docs/WINDOWS.md](docs/WINDOWS.md)
 - ✅ **2026-06-23** 打印升级到 **极印 PixCut S1 裁切打印机**：通过驱动官方 App 实现真打印，支持 **AI 抠图模切**（贴纸随主体轮廓裁切）与普通铺满打印，可配置切换；打印后端可在 `lp`（系统 CUPS 打印机）与 `pixcut`（PixCut S1）间切换。新增 **调试模式**（走完整条打印链路但不点"切割"、不真打印、不耗相纸，日志输出成功），与 **连续打印自愈**（每 N 次打印自动重启打印 App 清理画板，避免标签累积）
 - ✅ **2026-06-23** 日志治理：服务日志按大小**轮转**写入 `data/logs/`（默认 5MB×5 ≈ 25MB 上限、自动删旧）并在启动时按天清理过期日志，**避免长跑占满磁盘**；打印链路顺带清理打印 App 自身堆积的历史日志
 - ✅ **2026-06-05**「站立手办」模板修复：去除误入画面的鞋子、强制全身出图并自带圆形底座、为自动打标器加排除词（阻止"半身/手持物"等标签污染模板）——解决"出半身像、道具乱入"问题
@@ -103,6 +104,8 @@ uv run python scripts/smoke_test.py
 
 启动后：在控制台「录入」页把熟客照片录进去 → 顾客到店即自动识别触发 → 在「熟客管理」页可查看成品、重生成、手动打印。
 
+> 🪟 **Windows 10**：同一套代码也能在 Windows 跑(打印走系统打印机、摄像头走 DirectShow)——安装与打印机配置见 **[docs/WINDOWS.md](docs/WINDOWS.md)**。
+
 ## ⚙️ 配置
 
 全局配置 `config.yaml`
@@ -115,7 +118,7 @@ uv run python scripts/smoke_test.py
 | `orchestration.daily_limit`         | 每人每日生成次数上限（默认 `1`）                                 |
 | `storage.history_retention_days`    | 生成历史保留天数（默认 `3`）                                     |
 | `printing.enabled`                  | 自动打印开关（当前 `false`，以"手动打印"兜底，待硬件定型后开启） |
-| `printing.backend`                  | 打印后端：`lp`（系统 CUPS 打印机）｜ `pixcut`（极印 PixCut S1，驱动官方 App） |
+| `printing.backend`                  | 打印后端：`system`（跨平台系统打印机：mac/Linux 走 CUPS、Windows 走 win32print）｜ `pixcut`（仅 macOS，驱动官方 App） |
 | `printing.pixcut.cutout`            | PixCut：是否每次 **AI 抠图模切**（贴纸随轮廓裁切；每次消耗一次抠图额度）       |
 | `printing.pixcut.dry_run`           | PixCut **调试模式**：走完链路但不点"切割"、不打印、不耗材，日志输出成功       |
 | `printing.pixcut.restart_every`     | PixCut：每 N 次打印自动重启 App 清理累积画板（默认 `10`，`0` 关闭）          |

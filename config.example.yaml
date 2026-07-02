@@ -25,7 +25,7 @@ camera:
 
 recognition:
   model_pack: buffalo_l
-  providers: [CPUExecutionProvider]
+  providers: [CPUExecutionProvider]   # cross-platform CPU. mac Neural Engine: prepend CoreMLExecutionProvider. Windows GPU: install onnxruntime-directml and use DmlExecutionProvider
   ctx_id: -1
   det_size: 640
   match_threshold: 0.45
@@ -43,9 +43,9 @@ server:
 
 printing:
   enabled: false                # auto-print after generation (manual /api/print ignores this)
-  backend: lp                   # lp = CUPS system printer | pixcut = Liene-app UI automation
-  printer_name: ""              # lp only; empty = system default (list: lpstat -p)
-  pixcut:                       # backend=pixcut only (drives pixcut-probe/print_via_app.sh)
+  backend: system               # system = OS printer (CUPS on mac/Linux, win32print on Windows) | pixcut = macOS-only Liene-app UI automation
+  printer_name: ""              # system backend; empty = OS default printer (mac: `lpstat -p` / Windows: Settings → Printers)
+  pixcut:                       # backend=pixcut only (macOS); ignored on Windows/Linux
     script: pixcut-probe/print_via_app.sh
     dry_run: false              # DEBUG: run whole flow but never click 切割 (no print/ribbon), log success
     cutout: false               # apply AI抠图 die-cut each print (uses a trial credit)

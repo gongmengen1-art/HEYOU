@@ -1,33 +1,39 @@
-"""Printing backends: CUPS `lp` (system printer) or the PixCut S1 via Liene-app UI automation.
+"""Cross-platform printing.
 
-`print_output(path, printing_cfg)` is the single entry point the app uses; it dispatches on
-`printing_cfg.backend` ("lp" | "pixcut"). The pixcut backend shells out to
-`pixcut-probe/print_via_app.sh`, which drives the official Liene Photo app's GUI (it takes over
-the mouse/screen and can take 1-2 min per print)."""
+Two backends, chosen by `printing_cfg.backend`:
+  * "system" (a.k.a. "lp" / "win") — the OS's normal printer: CUPS `lp`/`lpstat` on
+    macOS/Linux, win32print + GDI on Windows. Works everywhere; this is what Windows uses
+    (install the PixCut as a system printer, then set `backend: system`).
+  * "pixcut" — macOS-only: UI-automate the official Liene Photo app via
+    `pixcut-probe/print_via_app.sh`. Selecting it on a non-mac returns a clear error.
+
+`print_output(path, printing_cfg)` / `backend_status(printing_cfg)` are the entry points the
+app uses. Windows-only imports (pywin32) are done lazily inside the Windows functions so this
+module still imports cleanly on macOS/Linux."""
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _PRINT_COUNT_FILE = _PROJECT_ROOT / "data" / ".pixcut_print_count"
 
+_IS_WINDOWS = sys.platform.startswith("win")
+_IS_MAC = sys.platform == "darwin"
 
-def list_printers() -> list[str]:
+
+# ── System-printer backend: CUPS (lp) on POSIX ───────────────────────────────
+def _list_lp() -> list[str]:
     try:
         out = subprocess.run(["lpstat", "-p"], capture_output=True, text=True, timeout=10)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
-    names = []
-    for line in out.stdout.splitlines():
-        # e.g. "printer HP_OfficeJet is idle.  enabled since ..."
-        if line.startswith("printer "):
-            names.append(line.split()[1])
-    return names
+    return [line.split()[1] for line in out.stdout.splitlines() if line.startswith("printer ")]
 
 
-def print_image(path: str, printer_name: str = "") -> tuple[bool, str]:
+def _print_lp(path: str, printer_name: str = "") -> tuple[bool, str]:
     cmd = ["lp"]
     if printer_name:
         cmd += ["-d", printer_name]
@@ -43,7 +49,7 @@ def print_image(path: str, printer_name: str = "") -> tuple[bool, str]:
     return True, out.stdout.strip()
 
 
-def _default_printer() -> str:
+def _default_printer_lp() -> str:
     try:
         out = subprocess.run(["lpstat", "-d"], capture_output=True, text=True, timeout=5)
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -54,9 +60,8 @@ def _default_printer() -> str:
     return ""
 
 
-def printer_status(printer_name: str = "") -> dict:
-    """Report whether a printer is connected and healthy (via CUPS `lpstat`)."""
-    target = printer_name or _default_printer()
+def _status_lp(printer_name: str = "") -> dict:
+    target = printer_name or _default_printer_lp()
     if not target:
         return {"connected": False, "ok": False, "state": "无打印机", "name": ""}
     try:
@@ -73,7 +78,103 @@ def printer_status(printer_name: str = "") -> dict:
     return {"connected": True, "ok": True, "state": "就绪", "name": target}
 
 
-# ── PixCut S1 (Liene-app UI automation) backend ──────────────────────────────
+# ── System-printer backend: win32print + GDI on Windows ──────────────────────
+def _list_win() -> list[str]:
+    try:
+        import win32print
+    except ImportError:
+        return []
+    flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+    return [p[2] for p in win32print.EnumPrinters(flags)]
+
+
+def _print_win(path: str, printer_name: str = "") -> tuple[bool, str]:
+    """Print an image on Windows by rendering it onto the printer's GDI device context,
+    scaled to fit the printable page area (aspect-preserving, centered)."""
+    try:
+        import win32con
+        import win32print
+        import win32ui
+        from PIL import Image, ImageWin
+    except ImportError as e:
+        return False, f"Windows 打印需要 pywin32（uv add pywin32 或 pip install pywin32）: {e}"
+    target = printer_name or win32print.GetDefaultPrinter()
+    if not target:
+        return False, "没有可用的系统打印机（在 Windows 设置里把 PixCut 装为打印机）"
+    try:
+        img = Image.open(path).convert("RGB")
+    except Exception as e:  # noqa: BLE001
+        return False, f"无法打开图片: {e}"
+    hdc = None
+    try:
+        hdc = win32ui.CreateDC()
+        hdc.CreatePrinterDC(target)
+        page_w = hdc.GetDeviceCaps(win32con.HORZRES)   # printable area, device pixels
+        page_h = hdc.GetDeviceCaps(win32con.VERTRES)
+        iw, ih = img.size
+        scale = min(page_w / iw, page_h / ih)
+        dw, dh = int(iw * scale), int(ih * scale)
+        x, y = (page_w - dw) // 2, (page_h - dh) // 2
+        hdc.StartDoc(str(path))
+        hdc.StartPage()
+        ImageWin.Dib(img).draw(hdc.GetHandleOutput(), (x, y, x + dw, y + dh))
+        hdc.EndPage()
+        hdc.EndDoc()
+        return True, f"printed to {target} ({dw}x{dh}px)"
+    except Exception as e:  # noqa: BLE001
+        return False, f"Windows 打印失败: {e}"
+    finally:
+        if hdc is not None:
+            try:
+                hdc.DeleteDC()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _status_win(printer_name: str = "") -> dict:
+    try:
+        import win32print
+    except ImportError:
+        return {"connected": False, "ok": False, "state": "pywin32 未安装", "name": printer_name}
+    target = printer_name or win32print.GetDefaultPrinter()
+    if not target:
+        return {"connected": False, "ok": False, "state": "无打印机", "name": ""}
+    try:
+        h = win32print.OpenPrinter(target)
+        try:
+            info = win32print.GetPrinter(h, 2)
+        finally:
+            win32print.ClosePrinter(h)
+    except Exception:  # noqa: BLE001
+        return {"connected": False, "ok": False, "state": "未连接", "name": target}
+    status = info.get("Status", 0)
+    if status == 0:
+        return {"connected": True, "ok": True, "state": "就绪", "name": target}
+    offline = getattr(win32print, "PRINTER_STATUS_OFFLINE", 0x80)
+    printing = getattr(win32print, "PRINTER_STATUS_PRINTING", 0x400)
+    if status & offline:
+        return {"connected": False, "ok": False, "state": "离线", "name": target}
+    if status & printing:
+        return {"connected": True, "ok": True, "state": "打印中", "name": target}
+    return {"connected": True, "ok": False, "state": f"状态码 {status}", "name": target}
+
+
+# ── System-printer backend: cross-platform facade ────────────────────────────
+def list_printers() -> list[str]:
+    return _list_win() if _IS_WINDOWS else _list_lp()
+
+
+def print_image(path: str, printer_name: str = "") -> tuple[bool, str]:
+    """Print an image on the OS's system printer (Windows GDI or CUPS `lp`)."""
+    return _print_win(str(path), printer_name) if _IS_WINDOWS else _print_lp(str(path), printer_name)
+
+
+def printer_status(printer_name: str = "") -> dict:
+    """Connection/health of the configured system printer (cross-platform)."""
+    return _status_win(printer_name) if _IS_WINDOWS else _status_lp(printer_name)
+
+
+# ── PixCut S1 (Liene-app UI automation) backend — macOS only ─────────────────
 def _liene_running() -> bool:
     try:
         r = subprocess.run(["pgrep", "-f", "Contents/MacOS/Liene Photo"],
@@ -118,7 +219,9 @@ def restart_liene_app(wait_sec: float = 30.0) -> bool:
 
 def print_via_pixcut(path: str, pcfg) -> tuple[bool, str]:
     """Print on the PixCut S1 by UI-automating the Liene Photo app via print_via_app.sh.
-    Drives the GUI (takes over the screen) and can take 1-2 min. `pcfg` is a PixcutCfg."""
+    Drives the GUI (takes over the screen) and can take 1-2 min. macOS only. `pcfg` is a PixcutCfg."""
+    if not _IS_MAC:
+        return False, "pixcut 后端仅支持 macOS；Windows/Linux 请用 backend: system"
     script = Path(pcfg.script)
     if not script.is_absolute():
         script = _PROJECT_ROOT / script
@@ -160,16 +263,20 @@ def print_via_pixcut(path: str, pcfg) -> tuple[bool, str]:
     return True, detail
 
 
+# ── Dispatchers ──────────────────────────────────────────────────────────────
 def print_output(path: str, printing_cfg) -> tuple[bool, str]:
-    """Dispatch a print to the configured backend. `printing_cfg` is a PrintingCfg."""
-    if getattr(printing_cfg, "backend", "lp") == "pixcut":
+    """Dispatch a print to the configured backend. `printing_cfg` is a PrintingCfg.
+    backend "pixcut" → mac UI-automation; anything else ("system"/"lp"/"win") → system printer."""
+    if getattr(printing_cfg, "backend", "system") == "pixcut":
         return print_via_pixcut(str(path), printing_cfg.pixcut)
     return print_image(str(path), printing_cfg.printer_name)
 
 
 def backend_status(printing_cfg) -> dict:
     """Connection/health for the configured backend (PixCut = is the Liene app running)."""
-    if getattr(printing_cfg, "backend", "lp") == "pixcut":
+    if getattr(printing_cfg, "backend", "system") == "pixcut":
+        if not _IS_MAC:
+            return {"connected": False, "ok": False, "state": "pixcut 仅 macOS", "name": "PixCut S1"}
         if _liene_running():
             return {"connected": True, "ok": True, "state": "就绪 (PixCut)", "name": "PixCut S1"}
         return {"connected": False, "ok": False, "state": "Liene App 未运行", "name": "PixCut S1"}

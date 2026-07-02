@@ -74,7 +74,8 @@ class PixcutCfg(BaseModel):
 class PrintingCfg(BaseModel):
     enabled: bool = False
     printer_name: str = ""
-    backend: str = "lp"         # "lp" = CUPS system printer | "pixcut" = Liene-app UI automation
+    backend: str = "system"     # "system" = OS printer (CUPS on mac/Linux, win32print on Windows) |
+                                # "pixcut" = macOS-only Liene-app UI automation. "lp"/"win" alias "system".
     pixcut: PixcutCfg = Field(default_factory=PixcutCfg)
 
 
