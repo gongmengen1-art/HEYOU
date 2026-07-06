@@ -1025,6 +1025,77 @@ def canvasprobe():
     log("-> send console output + ALL logs\\cal_*.png")
 
 
+def fluttertest():
+    """canvasprobe proved: the CDP click on 画板 WORKS and the 创建设计 modal is NATIVE
+    FLUTTER UI (visible in the OS screenshot, absent from the DOM). clicktest only ever
+    aimed OS-injected clicks at WEB elements — the drop may live in the Flutter->webview
+    input forwarding, not at the Flutter window itself. So: open the modal via CDP, then
+    SendInput-click the Flutter 用于4*7相纸 box and see whether an editor webview appears."""
+    _require_win()
+    _dpi_aware()
+    pg, gw, _clip, _Image = _deps()
+    win = find_liene_window(gw)
+    if win is None:
+        sys.exit("ERROR: Liene window not found")
+    try:
+        if win.isMinimized:
+            win.restore()
+        win.activate()
+        time.sleep(0.8)
+    except Exception:  # noqa: BLE001
+        pass
+    ui = CdpUI()
+    clear_snaps()
+    if not ui.find_text("画板"):
+        sys.exit("not on the home page — run 'cdp' (restarts the app) and retry")
+    p = ui.find_text("画板")
+    ui.click_xy(p["x"], p["y"], 2.0)          # opens the Flutter 创建设计 modal (proven)
+    pg.screenshot().save(os.path.join(LOGS_DIR, "cal_ft_modal.png"))
+    before = {t.get("id") for t in cdp_pages(timeout=2.0)}
+    # 用于4*7相纸 box: window-rel (526,305), measured off canvasprobe's OS screenshot
+    # (box center abs (678,351), window origin (152,46)).
+    x, y = win.left + 526, win.top + 305
+    log(f"SendInput-clicking the Flutter 4*7 box at ({x},{y})")
+    n = _send_click(x, y)
+    log(f"  injected {n}/2 events")
+    time.sleep(3.5)
+    pg.screenshot().save(os.path.join(LOGS_DIR, "cal_ft_after.png"))
+    log(f"OS screenshots -> {LOGS_DIR}\\cal_ft_modal.png / cal_ft_after.png")
+    after = cdp_pages(timeout=6.0)
+    new = [t for t in after if t.get("id") not in before]
+    log("CDP targets now:")
+    for t in after:
+        mark = "NEW  " if t.get("id") not in before else "     "
+        log(f"  {mark}title={t.get('title')!r} url={t.get('url')!r}")
+    if new:
+        log("*** FLUTTER UI ACCEPTS SendInput — hybrid driver unlocked ***")
+        for t in new:
+            if not (t.get("url") or "").startswith("http"):
+                continue
+            try:
+                s = CdpSession(t["webSocketDebuggerUrl"])
+                texts = s.eval("""(()=>{const out=[], seen=new Set();
+ for (const e of document.querySelectorAll('*')) {
+   if (e.children.length) continue;
+   const r = e.getBoundingClientRect();
+   if (r.width < 2 || r.height < 2) continue;
+   const t = ((e.innerText || e.value || '') + '').trim();
+   if (t && t.length <= 18 && !seen.has(t)) { seen.add(t); out.push(t); }
+   if (out.length >= 80) break;
+ }
+ return out;})()""")
+                log(f"  editor texts: {texts}")
+                s.close()
+            except Exception as e:  # noqa: BLE001
+                log(f"  (editor attach failed: {e})")
+    else:
+        log("no new webview appeared — either SendInput is also blocked for Flutter UI "
+            "(next fallback: UIA Invoke via pywinauto) or the box offset missed; "
+            "compare cal_ft_modal.png vs cal_ft_after.png (modal still open? box "
+            "highlighted?)")
+    log("-> send console output + logs\\cal_ft_*.png")
+
+
 def pages_cmd():
     """List every CDP page target with its URL and visible texts. Run this AFTER manually
     navigating the app into the editor — it reveals where the editor lives (same page?
@@ -1140,8 +1211,8 @@ def wait_done(timeout=300):
 def main():
     ap = argparse.ArgumentParser(description="Windows Liene-app UI automation (PixCut S1).")
     ap.add_argument("command",
-                    choices=["probe", "clicktest", "cdp", "canvasprobe", "pages",
-                             "dryrun", "print", "logscan"],
+                    choices=["probe", "clicktest", "cdp", "canvasprobe", "fluttertest",
+                             "pages", "dryrun", "print", "logscan"],
                     help="probe = geometry report; clicktest = diagnose click injection; "
                          "cdp = restart app with WebView2 remote debugging + DOM probe; "
                          "canvasprobe = click 画板 + collect evidence of what opens; "
@@ -1163,6 +1234,8 @@ def main():
         cdp()
     elif args.command == "canvasprobe":
         canvasprobe()
+    elif args.command == "fluttertest":
+        fluttertest()
     elif args.command == "pages":
         pages_cmd()
     elif args.command == "logscan":
