@@ -1,40 +1,89 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""pixcut_win.py — Windows port of the macOS Liene-app UI-automation (PixCut S1 printing).
+r"""pixcut_win.py — Windows port of the macOS Liene-app UI-automation (PixCut S1 printing).
 
 The macOS driver (print_via_app.py) drives the Liene Photo app via osascript / CGEvent /
 screencapture. This module does the same on Windows with:
-  * pyautogui  — click / move / type / hotkey / screenshot
+  * pyautogui  — click / move / hotkey / screenshot
   * pygetwindow — locate + activate the Liene window, read its rect
-  * pyperclip  — clipboard (path paste into the file dialog)
+  * pyperclip  — clipboard (all text entry is clipboard-paste, so the Chinese IME
+                 can never intercept/mangle keystrokes)
   * psutil     — find / restart the Liene process
-The high-level FLOW mirrors print_via_app.py. The per-control OFFSETS below MUST be calibrated
-against a Windows screenshot first — window chrome, size and DPI differ from macOS.
 
-STEP 1 (do this first): with the Liene app open, run
-    uv run python pixcut-probe\\pixcut_win.py probe
-It saves a full-screen screenshot to logs\\pixcut_probe.png and prints the Liene window rect,
-DPI/scale and all window titles. Send those to calibrate OFFSETS, then the print flow is enabled.
+CALIBRATION STATE (probe run 2026-07-06, screen 1600x900 @100%, window 1296x768@(152,46)):
+  * The Windows app is the SAME Creativerse web UI as macOS at nearly the same client size
+    (mac 1280x760): the web-content offsets transfer ~1:1 (measured: + 画板 mac (1103,55)
+    vs win (1101,55)). Native title bar differs (home_btn re-measured for Windows).
+  * Offsets marked "mac guess" below are unverified — the `dryrun` command snapshots every
+    step to logs\cal_NN_<step>.png so they can be corrected from one run's screenshots.
 
-Status: SCAFFOLDING — `probe` + primitives + vision helpers ready; the print flow is added
-once OFFSETS are calibrated from a real Windows screenshot.
+COMMANDS
+  probe          report geometry + full screenshot (calibration step 1)
+  dryrun <img>   full flow UP TO the 切割预览 — never clicks 切割, uses NO ribbon.
+                 Saves logs\cal_NN_<step>.png after every step. Send those back.
+  logscan        search the disk for the Liene app's own log files (job polling)
+  print <img>    real print — DISABLED until the dryrun is verified (CALIBRATED=False)
+
+While dryrun runs: DO NOT touch mouse/keyboard. Abort = slam the mouse into the
+top-left screen corner (pyautogui failsafe).
 """
 from __future__ import annotations
 
 import argparse
+import glob
 import os
+import re
 import sys
 import time
 
 APP_TITLE_HINTS = ("Liene", "极印", "Creativerse", "小蓝盒", "Photo")
+PROC_HINTS = ("liene", "creativerse", "hannto")
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(HERE)
+LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
 
-# Per-control offsets in *physical pixels*, relative to the Liene window's top-left (win.left,
-# win.top). TO BE CALIBRATED from a Windows screenshot — the macOS values do NOT transfer.
+# Canvas paper size (inches) — the blank "用于4*7相纸" canvas.
+CANVAS_W_IN, CANVAS_H_IN = 4.0, 7.0
+
+# Flip to True only after a Windows dryrun has been verified end-to-end.
+# The `print` command refuses to run while False (ribbon safety).
+CALIBRATED = False
+
+# Expected window size (from probe 2026-07-06). Offsets are only valid near this.
+EXPECT_W, EXPECT_H = 1296, 768
+
+# Per-control offsets in *physical pixels*, relative to the Liene window's top-left
+# (pygetwindow win.left/win.top). "measured" = read off the 2026-07-06 Windows probe
+# screenshot; "mac guess" = ported verbatim from print_via_app.py (same web UI, verify
+# via dryrun snapshots).
 OFF: dict[str, tuple[int, int]] = {
-    # "home_btn": (x, y), "huaban_tab": (x, y), "make_btn": (x, y), ...  (filled after probe)
+    "home_btn":      (133, 16),    # measured: 🏠首页 in the native title bar
+    "huaban_btn":    (1101, 55),   # measured: teal "+ 画板" on Home (also teal-detected)
+    "blank_plus":    (517, 305),   # mac guess: 创建设计 modal, "+" 用于4*7相纸 box
+    "upload_tool":   (34, 261),    # mac guess: left toolbar 上传
+    "upload_btn":    (234, 97),    # mac guess: teal 上传图片 at the upload panel top
+    "apply_btn":     (640, 645),   # mac guess: teal 应用 in the 效果图 modal
+    "ai_cutout":     (1157, 717),  # mac guess: right panel 工具 > AI抠图
+    "next_btn":      (643, 656),   # mac guess: teal 下一步 in the AI抠图 modal
+    "fld_w":         (1092, 508),  # mac guess: 高级 W field
+    "fld_h":         (1185, 508),  # mac guess: 高级 H field
+    "fld_x":         (1092, 548),  # mac guess: 高级 X field
+    "fld_y":         (1185, 548),  # mac guess: 高级 Y field
+    "make_btn":      (1235, 52),   # mac guess: pale-teal 制作 (top-right 2nd row)
+    "cut_btn":       (840, 592),   # mac guess: teal 切割 in 切割预览 — PRINTS, dryrun never clicks
+    "cut_preview_x": (759, 120),   # mac guess: ✕ of the 切割预览 modal
 }
+
+# Window-relative rects (x0,y0,x1,y1) used by the teal detector / vision, ported from macOS.
+RECT_HUABAN = (980, 35, 1290, 80)      # home: teal + 画板 button row
+RECT_UPLOAD = (10, 80, 440, 125)       # editor: teal 上传图片 at upload-panel top
+RECT_MODAL_BOTTOM = (300, 560, 980, 700)   # 效果图 / AI抠图 modal: teal 应用 / 下一步
+RECT_CUT = (620, 560, 1020, 660)       # 切割预览: teal 切割 button
+RECT_CANVAS = (255, 95, 1005, 710)     # editor canvas viewport (object detection)
+
+
+def log(*a):
+    print("[pixcut_win]", *a, flush=True)
 
 
 def _require_win():
@@ -64,7 +113,7 @@ def _deps():
     except ImportError as e:
         sys.exit(f"Windows automation deps missing ({e}). Run: uv sync  "
                  "(installs pyautogui/pygetwindow/pyperclip on Windows).")
-    pyautogui.FAILSAFE = False
+    pyautogui.FAILSAFE = True   # mouse to top-left corner = emergency abort
     return pyautogui, gw, pyperclip, Image
 
 
@@ -97,9 +146,8 @@ def probe():
     _require_win()
     _dpi_aware()
     pyautogui, gw, pyperclip, Image = _deps()
-    logs = os.path.join(PROJECT_ROOT, "logs")
-    os.makedirs(logs, exist_ok=True)
-    shot_path = os.path.join(logs, "pixcut_probe.png")
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    shot_path = os.path.join(LOGS_DIR, "pixcut_probe.png")
 
     sw, sh = pyautogui.size()
     scale = _screen_scale()
@@ -133,8 +181,7 @@ def probe():
         for p in psutil.process_iter(["name", "exe"]):
             name = (p.info.get("name") or "")
             exe = (p.info.get("exe") or "")
-            if any(h.lower() in name.lower() or h.lower() in exe.lower()
-                   for h in ("liene", "creativerse", "hannto")):
+            if any(h in name.lower() or h in exe.lower() for h in PROC_HINTS):
                 cands.append((p.pid, name, exe))
         print(f"[probe] candidate Liene processes: {cands[:10] or 'NONE (name hint miss)'}")
     except Exception as e:  # noqa: BLE001
@@ -146,11 +193,12 @@ def probe():
     print("[probe] DONE — send me logs\\pixcut_probe.png plus everything printed above.")
 
 
-# ---- input / vision primitives (used by the print flow, added after calibration) ----
+# ---- input / vision primitives ----------------------------------------------
 class UI:
     """Windows automation primitives, mirroring print_via_app.py's UI class. Coordinates are
-    physical pixels; (ox, oy) is the Liene window's top-left. scale is informational (we work in
-    physical px, so pt==px here) but kept so the flow code can stay symmetric with macOS."""
+    physical pixels; (ox, oy) is the Liene window's top-left. scale stays 1.0 on Windows
+    (we are DPI-aware, so screenshot px == click px) but is kept so the vision helpers stay
+    symmetric with macOS (which has Retina scale 2)."""
 
     def __init__(self, ox: int, oy: int, scale: float = 1.0):
         self.ox, self.oy, self.scale = ox, oy, scale
@@ -160,6 +208,8 @@ class UI:
         win = find_liene_window(self._gw)
         if win is not None:
             try:
+                if win.isMinimized:
+                    win.restore()
                 win.activate()
             except Exception:  # noqa: BLE001
                 pass
@@ -180,23 +230,15 @@ class UI:
 
     def hotkey(self, *keys):
         self._pg.hotkey(*keys)
+        time.sleep(0.15)
 
     def press(self, key):
         self._pg.press(key)
+        time.sleep(0.15)
 
-    def type_text(self, text):
-        self._pg.typewrite(str(text), interval=0.02)
-
-    def type_field(self, name, value):
-        """Click a field, select-all, type the value, Enter (Windows = Ctrl, not Cmd)."""
-        x, y = self.abs(name)
-        self.click_pt(x, y, 0.4)
-        self.hotkey("ctrl", "a")
-        time.sleep(0.1)
-        self.type_text(value)
-        time.sleep(0.1)
-        self.press("enter")
-        time.sleep(0.5)
+    def esc(self):
+        self.press("esc")
+        time.sleep(0.3)
 
     def clip_set(self, text):
         self._clip.copy(str(text))
@@ -204,8 +246,33 @@ class UI:
     def clip_get(self):
         return self._clip.paste()
 
-    def paste(self):
+    def paste_text(self, text):
+        """Type text IME-safely: put it on the clipboard and Ctrl+V."""
+        self.clip_set(text)
+        time.sleep(0.15)
         self.hotkey("ctrl", "v")
+        time.sleep(0.2)
+
+    def type_field(self, name, value):
+        """Click a field, select-all, paste the value, Enter."""
+        x, y = self.abs(name)
+        self.click_pt(x, y, 0.4)
+        self.hotkey("ctrl", "a")
+        self.paste_text(value)
+        self.press("enter")
+        time.sleep(0.5)
+
+    def read_field(self, name):
+        """Click a field, select-all + copy, return the clipboard text (its value)."""
+        x, y = self.abs(name)
+        self.click_pt(x, y, 0.4)
+        sentinel = "«pixcut-sentinel»"       # no NULs — Windows clipboard truncates at \x00
+        self.clip_set(sentinel)
+        self.hotkey("ctrl", "a")
+        self.hotkey("ctrl", "c")
+        time.sleep(0.25)
+        val = self.clip_get() or ""
+        return "" if val == sentinel else val.strip()
 
     def shot(self, path=None):
         self.activate()
@@ -215,15 +282,22 @@ class UI:
             img.save(path)
         return img.convert("RGB")
 
+    # px (screenshot) <-> logical points; identical on Windows (scale 1)
     def px2pt(self, px, py):
         return px / self.scale, py / self.scale
 
     def pt2px(self, x, y):
         return int(x * self.scale), int(y * self.scale)
 
+    def rect_abs(self, rect):
+        """Window-relative (x0,y0,x1,y1) -> absolute points rect."""
+        x0, y0, x1, y1 = rect
+        return self.ox + x0, self.oy + y0, self.ox + x1, self.oy + y1
+
 
 def find_teal(img, ui, x0, y0, x1, y1, pick="bottom", min_px=40):
-    """Teal accent button inside the points-rect (x0,y0)-(x1,y1). Same detector as macOS."""
+    """Teal accent button inside the points-rect (x0,y0)-(x1,y1). Same detector as macOS.
+    Requires at least `min_px` matching samples so stray anti-aliased edges don't register."""
     px = img.load()
     X0, Y0 = ui.pt2px(x0, y0)
     X1, Y1 = ui.pt2px(x1, y1)
@@ -262,19 +336,388 @@ def object_bbox_px(img, ui, region_px, cyan_only=False):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-# ---- CLI -------------------------------------------------------------------
+# ---- step snapshots (calibration) -------------------------------------------
+SNAPS: list[tuple[str, str]] = []
+
+
+def clear_snaps():
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    for f in glob.glob(os.path.join(LOGS_DIR, "cal_*.png")):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    SNAPS.clear()
+
+
+def snap(ui, tag):
+    path = os.path.join(LOGS_DIR, f"cal_{len(SNAPS):02d}_{tag}.png")
+    ui.shot(path)
+    SNAPS.append((tag, path))
+    log(f"snap -> {path}")
+
+
+# ---- window setup -----------------------------------------------------------
+def make_ui():
+    _require_win()
+    _dpi_aware()
+    pyautogui, gw, pyperclip, Image = _deps()
+    win = find_liene_window(gw)
+    if win is None:
+        sys.exit("ERROR: Liene window not found. Open + sign in to 极印 Photo first.")
+    try:
+        if win.isMinimized:
+            win.restore()
+        win.activate()
+        time.sleep(0.8)
+    except Exception:  # noqa: BLE001
+        pass
+    log(f"window {win.title!r} @({win.left},{win.top}) {win.width}x{win.height} "
+        f"scale={_screen_scale():.2f}")
+    if abs(win.width - EXPECT_W) > 80 or abs(win.height - EXPECT_H) > 60:
+        log(f"WARN: window size {win.width}x{win.height} differs from calibrated "
+            f"{EXPECT_W}x{EXPECT_H}; offsets may be off. Don't resize the app window.")
+    return UI(win.left, win.top, 1.0)
+
+
+# ---- high-level steps (ported from print_via_app.py) --------------------------
+def on_home(ui, img=None):
+    """Home page shows the teal + 画板 button top-right; the editor doesn't."""
+    if img is None:
+        img = ui.shot()
+    return find_teal(img, ui, *ui.rect_abs(RECT_HUABAN), pick="any")
+
+
+def go_home(ui):
+    """Back to the Creativerse home page from anywhere. Click twice — the 1st click may only
+    dismiss an overlay (e.g. 任务队列), the 2nd navigates. Idempotent once on home."""
+    for _ in range(2):
+        ui.click("home_btn", settle=1.3)
+
+
+def go_fresh(ui):
+    """Home -> + 画板 -> 创建设计 -> blank 4x7 canvas."""
+    log("navigating Home -> blank 4x7 canvas")
+    p = on_home(ui)
+    if p:
+        ui.click_pt(p[0], p[1], 1.5)
+    else:
+        ui.click("huaban_btn", settle=1.5)
+    snap(ui, "create_modal")
+    ui.click("blank_plus", settle=3.0)
+    snap(ui, "editor")
+
+
+def clear_canvas(ui):
+    """Delete any object currently on the canvas (so the next image doesn't overlap)."""
+    img = ui.shot()
+    r = ui.rect_abs(RECT_CANVAS)
+    region = (*ui.pt2px(r[0], r[1]), *ui.pt2px(r[2], r[3]))
+    bb = object_bbox_px(img, ui, region, cyan_only=False)
+    if not bb:
+        log("canvas already clear")
+        return
+    cx, cy = ui.px2pt((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2)
+    top = ui.px2pt(0, bb[1])[1]
+    ui.click_pt(cx, cy, 0.7)            # select
+    ui.click_pt(cx, top - 49, 0.9)      # floating 🗑 ~49px above the object top
+    log("deleted existing object")
+    time.sleep(0.5)
+
+
+def open_upload_panel(ui):
+    """Ensure the left 上传 panel is open (clicking the tool toggles it). Detect via the
+    teal 上传图片 button at the panel top; re-check AFTER each toggle click."""
+    rect = ui.rect_abs(RECT_UPLOAD)
+    for _ in range(4):
+        if find_teal(ui.shot(), ui, *rect, pick="any"):
+            return True
+        ui.click("upload_tool", settle=1.3)
+        if find_teal(ui.shot(), ui, *rect, pick="any"):
+            return True
+    return False
+
+
+def wait_file_dialog(ui, appear=True, timeout=10.0):
+    """Wait for the native open dialog (title 打开/Open) to appear/disappear."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        titles = [t.strip() for t in ui._gw.getAllTitles() if t.strip()]
+        found = any(t in ("打开", "Open") or t.startswith("打开") for t in titles)
+        if found == appear:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def upload_image(ui, image_path):
+    """Assumes the upload panel is open. Pick the file via the native open dialog and place
+    the original onto the canvas (应用). Aborts (returns False) if a stage doesn't verify."""
+    img = ui.shot()
+    p = find_teal(img, ui, *ui.rect_abs(RECT_UPLOAD), pick="any")
+    if p:
+        ui.click_pt(p[0], p[1], 1.5)     # teal 上传图片 -> native open dialog
+    else:
+        ui.click("upload_btn", settle=1.5)
+    if not wait_file_dialog(ui, appear=True):
+        snap(ui, "FAIL_no_file_dialog")
+        log("ERROR: native open dialog did not appear")
+        return False
+    snap(ui, "file_dialog")
+    # Alt+N focuses the 文件名 field (works on zh/en Windows); paste the path, Enter.
+    ui.hotkey("alt", "n")
+    ui.hotkey("ctrl", "a")
+    ui.paste_text(os.path.abspath(image_path))
+    ui.press("enter")
+    if not wait_file_dialog(ui, appear=False):
+        snap(ui, "FAIL_dialog_stuck")
+        log("ERROR: open dialog did not close after Enter")
+        return False
+    time.sleep(2.5)
+    snap(ui, "effect_modal")
+    # 效果图 modal -> teal 应用 (place original)
+    img = ui.shot()
+    p = find_teal(img, ui, *ui.rect_abs(RECT_MODAL_BOTTOM), pick="bottom")
+    if not p:
+        snap(ui, "FAIL_no_apply_btn")
+        log("ERROR: 效果图 modal / teal 应用 not found")
+        return False
+    ui.click_pt(p[0], p[1], 2.0)
+    snap(ui, "placed")
+    log("image placed (original)")
+    return True
+
+
+def fit_and_center(ui, aspect, margin=0.0):
+    """Scale the placed object to fill the 4x7 canvas (no distortion) and center it.
+    First VERIFIES the field offsets by reading W back as a number; if that fails the
+    offsets are wrong — skip typing (don't feed values into an unknown control)."""
+    probe_val = ui.read_field("fld_w")
+    try:
+        float(probe_val)
+    except (ValueError, TypeError):
+        snap(ui, "FAIL_fields_unreadable")
+        log(f"WARN: 高级 W field read back {probe_val!r} (not a number) — field offsets "
+            "need calibration; SKIPPING fit (image keeps its default size)")
+        return False
+    if not aspect or aspect <= 0:
+        log("WARN: unknown aspect; skipping fit")
+        return False
+    aw = CANVAS_W_IN - 2 * margin
+    ah = CANVAS_H_IN - 2 * margin
+    W = min(aw, ah * aspect)
+    H = W / aspect
+    W = round(W, 2); H = round(H, 2)
+    X = round((CANVAS_W_IN - W) / 2, 2); Y = round((CANVAS_H_IN - H) / 2, 2)
+    log(f"fit: aspect={aspect:.3f} -> {W}x{H}in at ({X},{Y})")
+    ui.type_field("fld_w", W)
+    ui.type_field("fld_h", H)
+    ui.type_field("fld_x", X)
+    ui.type_field("fld_y", Y)
+    return True
+
+
+def open_cut_preview(ui):
+    ui.click("make_btn", settle=4.5)          # 制作 -> 切割预览 (has a load delay)
+    for _ in range(3):
+        img = ui.shot()
+        if find_teal(img, ui, *ui.rect_abs(RECT_CUT), pick="bottom"):
+            snap(ui, "cut_preview")
+            return True
+        time.sleep(1.5)
+    snap(ui, "FAIL_no_cut_preview")
+    log("WARN: 切割预览 did not open (制作 may have missed); check make_btn offset")
+    return False
+
+
+def close_cut_preview(ui):
+    ui.click("cut_preview_x", settle=0.8)
+    ui.esc()
+    snap(ui, "after_close")
+
+
+def do_print(ui):
+    """Click 切割 = REAL PRINT, consumes ribbon. Only reachable from the print command."""
+    img = ui.shot()
+    p = find_teal(img, ui, *ui.rect_abs(RECT_CUT), pick="bottom")
+    if p:
+        ui.click_pt(p[0], p[1], 1.0)
+    else:
+        ui.click("cut_btn", settle=1.0)
+    log("clicked 切割 — printing")
+
+
+# ---- Liene log discovery (job polling) ---------------------------------------
+def liene_log_files():
+    """Find the Windows Liene app's own liene_photo_pc_*.log files (location unknown a
+    priori — the macOS path doesn't apply). Returns newest-first list."""
+    bases = [os.environ.get("APPDATA", ""), os.environ.get("LOCALAPPDATA", ""),
+             os.environ.get("PROGRAMDATA", ""),
+             os.path.join(os.environ.get("USERPROFILE", ""), "Documents")]
+    hits = []
+    for base in [b for b in bases if b and os.path.isdir(b)]:
+        for root, dirs, files in os.walk(base):
+            depth = root[len(base):].count(os.sep)
+            if depth >= 4:
+                dirs[:] = []
+                continue
+            low = os.path.basename(root).lower()
+            if not any(h in low for h in ("liene", "hannto", "jiyin", "photomacos", "photo_pc")):
+                continue
+            for f in files:
+                if f.lower().endswith(".log"):
+                    hits.append(os.path.join(root, f))
+            dirs[:] = []   # matched dir: don't descend further from the walk side
+            hits.extend(glob.glob(os.path.join(root, "**", "*.log"), recursive=True))
+    hits = sorted(set(hits), key=lambda f: os.path.getmtime(f), reverse=True)
+    return hits
+
+
+def logscan():
+    _require_win()
+    log("scanning for Liene app logs (AppData/ProgramData/Documents)...")
+    hits = liene_log_files()
+    if not hits:
+        log("no Liene .log files found — job polling will be skipped on real prints")
+    for f in hits[:20]:
+        log(f"  {f}  ({os.path.getsize(f)//1024} KB, "
+            f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(os.path.getmtime(f)))})")
+    return hits
+
+
+def wait_done(timeout=300):
+    files = [f for f in liene_log_files() if "liene_photo" in os.path.basename(f).lower()]
+    if not files:
+        log("WARN: no app log found; cannot poll completion")
+        return None
+    logf = files[0]
+    log(f"polling {logf}")
+    start = time.time()
+    last = ""
+    while time.time() - start < timeout:
+        try:
+            with open(logf, "rb") as fh:
+                fh.seek(max(0, os.path.getsize(logf) - 262144))
+                tail = fh.read().decode("utf-8", "ignore")
+        except OSError:
+            time.sleep(4)
+            continue
+        ms = re.findall(r'"job-state":(\d+).*?"job-sub-state":(\d+)', tail)
+        rib = re.findall(r'"ribbon-cnt":(\d+)', tail)
+        if ms:
+            st, sub = ms[-1]
+            cur = f'state={st}/{sub} ribbon={rib[-1] if rib else "?"}'
+            if cur != last:
+                log("  " + cur)
+                last = cur
+            if st == "9":
+                log("DONE — job completed.")
+                return True
+        time.sleep(4)
+    log("WARN: timed out waiting for completion")
+    return False
+
+
+# ---- flows -------------------------------------------------------------------
+def run_flow(image, dry_run=True, margin=0.0, fresh=None):
+    """The full print flow. dry_run=True stops at the 切割预览 (NO ribbon)."""
+    from PIL import Image as PILImage
+    image = os.path.abspath(image)
+    if not os.path.exists(image):
+        sys.exit(f"ERROR: image not found: {image}")
+    ui = make_ui()
+    clear_snaps()
+    snap(ui, "start")
+    ui.esc(); ui.esc()                      # dismiss stray modals from a prior run
+
+    home = on_home(ui)
+    if fresh is None:
+        fresh = bool(home)                  # auto: on home -> create a fresh canvas
+    if fresh:
+        if not home:
+            go_home(ui)
+        go_fresh(ui)
+    else:
+        clear_canvas(ui)
+
+    if not open_upload_panel(ui):
+        snap(ui, "FAIL_upload_panel")
+        log("ERROR: upload panel did not open — check upload_tool offset. "
+            "Send logs\\cal_*.png")
+        return finish(False, dry_run)
+    snap(ui, "upload_panel")
+
+    if not upload_image(ui, image):
+        return finish(False, dry_run)
+
+    iw, ih = PILImage.open(image).size
+    fit_ok = fit_and_center(ui, iw / ih, margin=margin)
+    snap(ui, "after_fit")
+
+    prev_ok = open_cut_preview(ui)
+    if not prev_ok:
+        return finish(False, dry_run)
+
+    if dry_run:
+        log("DRY RUN — reached 切割预览; NOT clicking 切割 (no print, no ribbon).")
+        close_cut_preview(ui)
+        go_home(ui)
+        snap(ui, "home_again")
+        return finish(True, dry_run, fit_ok=fit_ok)
+    do_print(ui)
+    wait_done()
+    time.sleep(1.0)
+    go_home(ui)
+    return finish(True, dry_run, fit_ok=fit_ok)
+
+
+def finish(ok, dry_run, fit_ok=True):
+    log("=" * 60)
+    log(("DRY-RUN " if dry_run else "PRINT ") + ("COMPLETED" if ok else "FAILED (see FAIL_* snap)"))
+    if ok and not fit_ok:
+        log("NOTE: fit/center was SKIPPED (field offsets uncalibrated) — the image stayed "
+            "at its default small size; that's expected on the first calibration run.")
+    log(f"{len(SNAPS)} step screenshots:")
+    for tag, path in SNAPS:
+        log(f"  {path}")
+    log("-> send me ALL logs\\cal_*.png plus this console output.")
+    return ok
+
+
+# ---- CLI ---------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Windows Liene-app UI automation (PixCut S1).")
-    ap.add_argument("command", choices=["probe", "print"],
-                    help="probe = report geometry + screenshot for calibration; print = (TODO)")
-    ap.add_argument("image", nargs="?", help="image to print (print command)")
+    ap.add_argument("command", choices=["probe", "dryrun", "print", "logscan"],
+                    help="probe = geometry report; dryrun = full flow WITHOUT printing "
+                         "(saves step screenshots); logscan = find the app's log files; "
+                         "print = real print (disabled until calibrated)")
+    ap.add_argument("image", nargs="?", help="image file (dryrun/print)")
+    ap.add_argument("--margin", type=float, default=0.0,
+                    help="shrink the fitted image by this margin (inches) per side")
+    ap.add_argument("--fresh", action="store_true",
+                    help="force Home -> new blank 4x7 canvas first (auto-detected otherwise)")
     args = ap.parse_args()
     _require_win()
+
     if args.command == "probe":
         probe()
-    else:
-        sys.exit("The Windows print flow isn't calibrated yet. Run 'probe' first and send me "
-                 "logs\\pixcut_probe.png so I can measure the OFFSETS.")
+    elif args.command == "logscan":
+        logscan()
+    elif args.command == "dryrun":
+        if not args.image:
+            sys.exit("usage: pixcut_win.py dryrun <image>  "
+                     "(e.g. pixcut-probe\\samples\\sample_4x7.jpg)")
+        run_flow(args.image, dry_run=True, margin=args.margin,
+                 fresh=True if args.fresh else None)
+    elif args.command == "print":
+        if not CALIBRATED:
+            sys.exit("REFUSING to print: the Windows flow is not calibrated yet "
+                     "(CALIBRATED=False). Run 'dryrun' first and send back the "
+                     "cal_*.png screenshots; printing consumes ribbon.")
+        if not args.image:
+            sys.exit("usage: pixcut_win.py print <image>")
+        run_flow(args.image, dry_run=False, margin=args.margin,
+                 fresh=True if args.fresh else None)
 
 
 if __name__ == "__main__":
