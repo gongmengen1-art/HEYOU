@@ -21,6 +21,11 @@ COMMANDS
   probe          report geometry + full screenshot (calibration step 1)
   clicktest      diagnose click injection: tries pyautogui / SendInput / PostMessage on the
                  home nav tabs and reports which one actually changes the page
+                 (2026-07-06 result: ALL THREE silently dropped — UIPI/hook-style filtering;
+                 hence the CDP path below)
+  cdp            restart the Liene app with WebView2 remote debugging enabled
+                 (--remote-debugging-port=9222) and probe the Creativerse page over the
+                 Chrome DevTools Protocol — DOM-level control, no OS input injection at all
   dryrun <img>   full flow UP TO the 切割预览 — never clicks 切割, uses NO ribbon.
                  Saves logs\cal_NN_<step>.png after every step. Send those back.
   logscan        search the disk for the Liene app's own log files (job polling)
@@ -716,6 +721,148 @@ def clicktest():
     log("-> send me this console output + logs\\cal_click_*.png")
 
 
+# ---- CDP (Chrome DevTools Protocol) over the app's WebView2 --------------------
+# clicktest showed ALL synthetic OS input (pyautogui / SendInput / PostMessage) is silently
+# dropped before reaching the app. The Creativerse UI is a WebView2 (Edge) though, and
+# WebView2 honours WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, so relaunching the app with
+# --remote-debugging-port gives us full DOM-level control (click by selector, set fields,
+# feed the file input directly) with no OS input injection anywhere.
+
+CDP_PORT = 9222
+LIENE_EXE_FALLBACK = r"C:\Program Files\Liene Photo\liene_photo_pc.exe"
+
+
+def liene_procs():
+    import psutil
+    out = []
+    for p in psutil.process_iter(["name", "exe", "username"]):
+        if (p.info.get("name") or "").lower() == "liene_photo_pc.exe":
+            out.append(p)
+    return out
+
+
+def restart_liene_with_cdp():
+    """Kill the Liene app and relaunch it with WebView2 remote debugging enabled.
+    The WebView2 user-data dir is untouched, so the Creativerse sign-in persists."""
+    import subprocess
+    import psutil
+    exe = LIENE_EXE_FALLBACK
+    procs = liene_procs()
+    for p in procs:
+        try:
+            exe = p.info.get("exe") or exe
+            log(f"killing liene_photo_pc.exe pid={p.pid} (user={p.info.get('username')})")
+            p.terminate()
+        except Exception as e:  # noqa: BLE001
+            log(f"  terminate failed: {e}")
+    if procs:
+        psutil.wait_procs(procs, timeout=10)
+        time.sleep(1.0)
+    if not os.path.exists(exe):
+        sys.exit(f"ERROR: Liene exe not found at {exe}")
+    env = dict(os.environ)
+    env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"--remote-debugging-port={CDP_PORT}"
+    DETACHED = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen([exe], cwd=os.path.dirname(exe), env=env, creationflags=DETACHED,
+                     close_fds=True)
+    log(f"relaunched {exe} with --remote-debugging-port={CDP_PORT}")
+
+
+def cdp_pages(timeout=45.0):
+    """Poll the CDP HTTP endpoint until page targets appear. Returns the JSON list."""
+    import json
+    import urllib.request
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{CDP_PORT}/json/list", timeout=2) as r:
+                targets = json.loads(r.read().decode("utf-8"))
+            pages = [t for t in targets if t.get("type") == "page"]
+            if pages:
+                return pages
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(1.0)
+    return []
+
+
+class CdpSession:
+    """Minimal CDP client over one page's webSocketDebuggerUrl."""
+
+    def __init__(self, ws_url):
+        try:
+            import websocket
+        except ImportError:
+            sys.exit("websocket-client missing — run: uv sync")
+        self._ws = websocket.create_connection(ws_url, timeout=15)
+        self._id = 0
+
+    def cmd(self, method, **params):
+        import json
+        self._id += 1
+        self._ws.send(json.dumps({"id": self._id, "method": method, "params": params}))
+        while True:
+            msg = json.loads(self._ws.recv())
+            if msg.get("id") == self._id:
+                if "error" in msg:
+                    raise RuntimeError(f"CDP {method}: {msg['error']}")
+                return msg.get("result", {})
+            # else: an event — ignore
+
+    def eval(self, expr, await_promise=False):
+        r = self.cmd("Runtime.evaluate", expression=expr, returnByValue=True,
+                     awaitPromise=await_promise)
+        res = r.get("result", {})
+        if res.get("subtype") == "error":
+            raise RuntimeError(f"JS error: {res.get('description')}")
+        return res.get("value")
+
+    def close(self):
+        try:
+            self._ws.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def cdp():
+    """Restart the app with remote debugging and dump DOM ground truth from the
+    Creativerse page: title/url, visible button texts, file inputs. READ-ONLY."""
+    _require_win()
+    restart_liene_with_cdp()
+    log("waiting for the app + CDP endpoint (up to ~45s)...")
+    pages = cdp_pages()
+    if not pages:
+        log("ERROR: no CDP page targets appeared. Possible causes: the app pins its own")
+        log("  additionalBrowserArguments (env var ignored) or the port is blocked.")
+        log("  -> send me this output; fallback is the registry policy or another port.")
+        return
+    log(f"{len(pages)} CDP page target(s):")
+    for t in pages:
+        log(f"  title={t.get('title')!r}  url={t.get('url')!r}")
+    # pick the Creativerse page (title 'mingshashan' seen on both mac + win)
+    pick = next((t for t in pages if "mingshashan" in (t.get("title") or "").lower()),
+                pages[0])
+    log(f"probing page {pick.get('title')!r} ...")
+    s = CdpSession(pick["webSocketDebuggerUrl"])
+    try:
+        log(f"  document.title = {s.eval('document.title')!r}")
+        log(f"  location.href  = {s.eval('location.href')!r}")
+        texts = s.eval(
+            "[...document.querySelectorAll('button,[role=button],a,[class*=btn],"
+            "[class*=tab]')].map(e=>e.innerText&&e.innerText.trim()).filter(t=>t&&"
+            "t.length<20).slice(0,60)")
+        log(f"  clickable texts: {texts}")
+        nfile = s.eval("document.querySelectorAll('input[type=file]').length")
+        log(f"  file inputs on page: {nfile}")
+        body = s.eval("document.body.innerText.replace(/\\s+/g,' ').slice(0,600)")
+        log(f"  body text head: {body!r}")
+    finally:
+        s.close()
+    log("CDP PROBE OK — DOM access works; the driver can move to CDP entirely.")
+    log("-> send me this console output.")
+
+
 # ---- Liene log discovery (job polling) ---------------------------------------
 def liene_log_files():
     """Find the Windows Liene app's own liene_photo_pc_*.log files (location unknown a
@@ -857,8 +1004,10 @@ def finish(ok, dry_run, fit_ok=True):
 # ---- CLI ---------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Windows Liene-app UI automation (PixCut S1).")
-    ap.add_argument("command", choices=["probe", "clicktest", "dryrun", "print", "logscan"],
+    ap.add_argument("command",
+                    choices=["probe", "clicktest", "cdp", "dryrun", "print", "logscan"],
                     help="probe = geometry report; clicktest = diagnose click injection; "
+                         "cdp = restart app with WebView2 remote debugging + DOM probe; "
                          "dryrun = full flow WITHOUT printing (saves step screenshots); "
                          "logscan = find the app's log files; "
                          "print = real print (disabled until calibrated)")
@@ -874,6 +1023,8 @@ def main():
         probe()
     elif args.command == "clicktest":
         clicktest()
+    elif args.command == "cdp":
+        cdp()
     elif args.command == "logscan":
         logscan()
     elif args.command == "dryrun":

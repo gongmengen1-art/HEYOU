@@ -22,6 +22,9 @@ dependencies = [
     "pygetwindow>=0.0.9 ; sys_platform == 'win32'",
     "pyperclip>=1.8 ; sys_platform == 'win32'",
     "psutil>=5.9 ; sys_platform == 'win32'",
+    # Windows-only: CDP client for driving the Liene app's WebView2 (Creativerse web UI)
+    # via --remote-debugging-port (synthetic OS input is silently dropped by the app).
+    "websocket-client>=1.7 ; sys_platform == 'win32'",
 ]
 
 [tool.uv]
