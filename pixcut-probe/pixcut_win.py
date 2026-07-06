@@ -767,7 +767,8 @@ def restart_liene_with_cdp():
     if not os.path.exists(exe):
         sys.exit(f"ERROR: Liene exe not found at {exe}")
     env = dict(os.environ)
-    env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"--remote-debugging-port={CDP_PORT}"
+    env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+        f"--remote-debugging-port={CDP_PORT} --remote-allow-origins=*")
     DETACHED = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     os.makedirs(LOGS_DIR, exist_ok=True)
     logfh = open(APP_LOG, "ab")   # the app keeps the inherited handle after we exit
@@ -778,10 +779,13 @@ def restart_liene_with_cdp():
     log(f"app log captured to {APP_LOG}")
 
 
-def cdp_pages(timeout=45.0):
-    """Poll the CDP HTTP endpoint until page targets appear. Returns the JSON list."""
+def cdp_pages(timeout=60.0):
+    """Poll the CDP HTTP endpoint until a REAL page target appears (the webview starts as
+    about:blank before navigating to Creativerse). Returns all page targets — possibly only
+    blank ones if the wait times out."""
     import json
     import urllib.request
+    pages = []
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
@@ -789,12 +793,12 @@ def cdp_pages(timeout=45.0):
                     f"http://127.0.0.1:{CDP_PORT}/json/list", timeout=2) as r:
                 targets = json.loads(r.read().decode("utf-8"))
             pages = [t for t in targets if t.get("type") == "page"]
-            if pages:
+            if any((p.get("url") or "").startswith(("http", "file")) for p in pages):
                 return pages
         except Exception:  # noqa: BLE001
             pass
         time.sleep(1.0)
-    return []
+    return pages
 
 
 class CdpSession:
@@ -805,7 +809,9 @@ class CdpSession:
             import websocket
         except ImportError:
             sys.exit("websocket-client missing — run: uv sync")
-        self._ws = websocket.create_connection(ws_url, timeout=15)
+        # suppress_origin: Chromium 111+ rejects websocket clients that send an Origin
+        # header unless --remote-allow-origins matches; sending none is always accepted.
+        self._ws = websocket.create_connection(ws_url, timeout=15, suppress_origin=True)
         self._id = 0
 
     def cmd(self, method, **params):
@@ -850,9 +856,11 @@ def cdp():
     log(f"{len(pages)} CDP page target(s):")
     for t in pages:
         log(f"  title={t.get('title')!r}  url={t.get('url')!r}")
-    # pick the Creativerse page (title 'mingshashan' seen on both mac + win)
+    # pick the Creativerse page (title 'mingshashan' seen on both mac + win); fall back to
+    # any real-URL page before settling for a still-blank one
     pick = next((t for t in pages if "mingshashan" in (t.get("title") or "").lower()),
-                pages[0])
+                next((t for t in pages
+                      if (t.get("url") or "").startswith(("http", "file"))), pages[0]))
     log(f"probing page {pick.get('title')!r} ...")
     s = CdpSession(pick["webSocketDebuggerUrl"])
     try:
