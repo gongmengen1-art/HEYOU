@@ -868,15 +868,20 @@ ED = {
 ED_MAKE_REGION = (1150, 30, 1290, 75)   # rel region where the teal 制作 button lives
 
 
-def find_teal_px(img, x0, y0, x1, y1, min_px=40):
+def find_teal_px(img, x0, y0, x1, y1, min_px=40, pale_ok=False):
     """Teal-accent detector on an OS screenshot (absolute px, scale 1.0). Returns the
-    cluster centroid or None."""
+    cluster centroid or None. pale_ok also accepts the washed-out/disabled teal the
+    制作 button shows over an empty canvas."""
     px = img.load()
     pts = []
     for y in range(max(0, int(y0)), min(img.height, int(y1)), 2):
         for x in range(max(0, int(x0)), min(img.width, int(x1)), 2):
             r, g, b = px[x, y]
-            if g > 165 and b > 155 and r < 155 and (g - r) > 35 and abs(g - b) < 65:
+            if pale_ok:
+                hit = g > 160 and b > 160 and r < 200 and (g - r) > 25 and abs(g - b) < 65
+            else:
+                hit = g > 165 and b > 155 and r < 155 and (g - r) > 35 and abs(g - b) < 65
+            if hit:
                 pts.append((x, y))
     if len(pts) < min_px:
         return None
@@ -930,15 +935,16 @@ def hybrid_flow(image, dry_run=True):
         log("-> send me ALL logs\\cal_*.png plus this console output.")
         return ok
 
-    # 1. Home via CDP (web content — only CDP clicks reach it)
+    # 1. ALWAYS restart the app first. The home webview stays alive in CDP even when an
+    #    editor tab covers it, so DOM checks can't tell which tab is VISIBLE — a restart
+    #    guarantees: home tab active, zero leftover 画板 tabs, debug port on.
+    log("restarting the app for a guaranteed-clean home state...")
+    restart_liene_with_cdp()
     cui = CdpUI()
-    if not cui.find_text("画板"):
-        log("not on the home page — restarting the app for a clean start")
-        restart_liene_with_cdp()
-        cui = CdpUI()
-        if not cui.wait_text("画板", timeout=25):
-            log(f"ERROR: home never appeared; texts: {cui.texts()}")
-            return done(False)
+    if not cui.wait_text("画板", timeout=25):
+        log(f"ERROR: home never appeared; texts: {cui.texts()}")
+        return done(False)
+    time.sleep(1.5)                       # let the home tab finish rendering
     win = find_liene_window(gw)
     if win is None:
         sys.exit("ERROR: Liene window not found")
@@ -958,13 +964,20 @@ def hybrid_flow(image, dry_run=True):
     cui.click_xy(p["x"], p["y"], 2.0)
     os_snap(pg, "create_modal")
 
-    # 3. 用于4*7相纸 box (SendInput on Flutter) -> editor
+    # 3. 用于4*7相纸 box (SendInput on Flutter) -> editor. Poll for the 制作 button
+    #    (pale/disabled teal over an empty canvas) — first editor open can be slow.
     _send_click(ox + ED["ft_4x7_box"][0], oy + ED["ft_4x7_box"][1])
-    time.sleep(3.5)
-    img = os_snap(pg, "editor")
-    if not find_teal_px(img, ox + ED_MAKE_REGION[0], oy + ED_MAKE_REGION[1],
-                        ox + ED_MAKE_REGION[2], oy + ED_MAKE_REGION[3]):
-        log("ERROR: editor did not open (teal 制作 not found top-right)")
+    found = None
+    for _ in range(6):
+        time.sleep(2.5)
+        img = pg.screenshot().convert("RGB")
+        found = find_teal_px(img, ox + ED_MAKE_REGION[0], oy + ED_MAKE_REGION[1],
+                             ox + ED_MAKE_REGION[2], oy + ED_MAKE_REGION[3], pale_ok=True)
+        if found:
+            break
+    os_snap(pg, "editor")
+    if not found:
+        log("ERROR: editor did not open (teal 制作 not found top-right after ~15s)")
         return done(False)
     log("editor open (制作 button detected)")
 
