@@ -861,11 +861,29 @@ class CdpUI:
 # Window-relative offsets for the FLUTTER surfaces, measured off OS screenshots
 # (window origin from pygetwindow; calibrated at the standard 1296x768 window, 100% DPI).
 ED = {
-    "ft_4x7_box":     (526, 305),   # 创建设计 modal: 用于4*7相纸 box (VERIFIED by fluttertest)
-    "ed_upload_tool": (41, 262),    # editor left toolbar: 上传 (from cal_ft_after.png)
-    "ed_make_btn":    (1243, 52),   # editor top-right: teal 制作 (from cal_ft_after.png)
+    "ft_4x7_box":        (526, 305),  # 创建设计 modal: 用于4*7相纸 box (VERIFIED by fluttertest)
+    "ed_upload_tool":    (41, 262),   # editor left toolbar: 上传 (VERIFIED 2026-07-06)
+    "ed_upload_img_btn": (242, 105),  # upload panel: teal 上传图片 -> native file dialog
+    "ed_lib_thumb1":     (163, 387),  # upload panel: first 原图 library thumbnail
+    "ed_make_btn":       (1243, 52),  # editor top-right: teal 制作 (VERIFIED, pale teal)
 }
-ED_MAKE_REGION = (1150, 30, 1290, 75)   # rel region where the teal 制作 button lives
+ED_MAKE_REGION = (1150, 30, 1290, 75)     # rel region of the teal 制作 button
+ED_UPLOAD_REGION = (235, 130, 555, 175)   # rel region of the teal 上传图片 button
+ED_CANVAS = (603, 172, 872, 679)          # rel rect of the white 4x7 canvas
+
+
+def canvas_has_object(img, ox, oy, min_px=150):
+    """True if the canvas rect contains enough non-white pixels (a placed object)."""
+    px = img.load()
+    cnt = 0
+    for y in range(oy + ED_CANVAS[1] + 8, oy + ED_CANVAS[3] - 8, 3):
+        for x in range(ox + ED_CANVAS[0] + 8, ox + ED_CANVAS[2] - 8, 3):
+            r, g, b = px[x, y]
+            if min(r, g, b) < 235:
+                cnt += 1
+                if cnt >= min_px:
+                    return True
+    return False
 
 
 def find_teal_px(img, x0, y0, x1, y1, min_px=40, pale_ok=False):
@@ -914,9 +932,10 @@ def wait_file_dialog(gw, appear=True, timeout=10.0):
 
 
 def hybrid_flow(image, dry_run=True):
-    """Home (CDP) -> 创建设计 modal -> 4x7 editor -> 上传 (SendInput). CURRENT CHECKPOINT:
-    stops after feeding the image — the editor's post-upload UI (placement, 制作, 切割预览)
-    is Flutter-native and unseen yet; it gets calibrated from this run's screenshots."""
+    """Home (CDP) -> 创建设计 modal -> 4x7 editor -> upload panel -> feed file -> place
+    thumbnail -> 制作 -> 切割预览 (SendInput for all Flutter UI). CURRENT CHECKPOINT 2:
+    stops at the preview WITHOUT clicking anything inside it — its 切割 offset, the
+    sizing controls and the dry-run close get calibrated from this run's screenshots."""
     _require_win()
     _dpi_aware()
     pg, gw, clip, _Image = _deps()
@@ -927,8 +946,8 @@ def hybrid_flow(image, dry_run=True):
 
     def done(ok):
         log("=" * 60)
-        log(("CHECKPOINT REACHED" if ok else "FAILED") + " — this build stops after the "
-            "upload step; the remaining editor steps get calibrated from these snaps.")
+        log(("CHECKPOINT REACHED" if ok else "FAILED") + " — calibration build; the "
+            "remaining steps get wired from these snaps.")
         log(f"{len(SNAPS)} step screenshots:")
         for tag, path in SNAPS:
             log(f"  {path}")
@@ -981,37 +1000,53 @@ def hybrid_flow(image, dry_run=True):
         return done(False)
     log("editor open (制作 button detected)")
 
-    # 4. 上传 tool (SendInput)
+    # 4. 上传 tool -> in-app upload panel (teal 上传图片 button at its top verifies it)
     _send_click(ox + ED["ed_upload_tool"][0], oy + ED["ed_upload_tool"][1])
     time.sleep(1.8)
-    os_snap(pg, "after_upload_tool")
+    img = os_snap(pg, "upload_panel")
+    if not find_teal_px(img, ox + ED_UPLOAD_REGION[0], oy + ED_UPLOAD_REGION[1],
+                        ox + ED_UPLOAD_REGION[2], oy + ED_UPLOAD_REGION[3]):
+        log("ERROR: upload panel did not open (teal 上传图片 not found)")
+        return done(False)
 
-    # 5. native file dialog (standard Win32 — keyboard injection works there)
-    if wait_file_dialog(gw, appear=True, timeout=8.0):
-        os_snap(pg, "file_dialog")
-        clip.copy(image)
-        time.sleep(0.2)
-        pg.hotkey("alt", "n")
-        time.sleep(0.3)
-        pg.hotkey("ctrl", "a")
-        time.sleep(0.2)
-        pg.hotkey("ctrl", "v")
-        time.sleep(0.4)
-        pg.press("enter")
-        if not wait_file_dialog(gw, appear=False, timeout=12.0):
-            os_snap(pg, "FAIL_dialog_stuck")
-            log("ERROR: the open dialog did not close (path paste may have failed)")
-            return done(False)
-        time.sleep(3.0)
-        os_snap(pg, "after_upload")
-        log("image fed to the editor — next round continues from here "
-            "(placement/fit -> 制作 -> 切割预览)")
-        return done(True)
+    # 5. 上传图片 -> NOW the native file dialog opens; feed the path by keyboard
+    _send_click(ox + ED["ed_upload_img_btn"][0], oy + ED["ed_upload_img_btn"][1])
+    if not wait_file_dialog(gw, appear=True, timeout=10.0):
+        os_snap(pg, "FAIL_no_file_dialog")
+        log("ERROR: file dialog did not appear after clicking 上传图片")
+        return done(False)
+    os_snap(pg, "file_dialog")
+    clip.copy(image)
+    time.sleep(0.2)
+    pg.hotkey("alt", "n")
+    time.sleep(0.3)
+    pg.hotkey("ctrl", "a")
+    time.sleep(0.2)
+    pg.hotkey("ctrl", "v")
+    time.sleep(0.4)
+    pg.press("enter")
+    if not wait_file_dialog(gw, appear=False, timeout=12.0):
+        os_snap(pg, "FAIL_dialog_stuck")
+        log("ERROR: the open dialog did not close (path paste may have failed)")
+        return done(False)
+    time.sleep(3.5)                        # upload/processing
+    img = os_snap(pg, "after_upload")
 
-    # no dialog: an in-app (Flutter) upload panel probably opened instead
-    log("no native file dialog appeared — an in-app upload panel may have opened; "
-        "the snap shows what to calibrate next")
-    os_snap(pg, "upload_panel_unknown")
+    # 6. place onto the canvas: on macOS, clicking a 原图 thumbnail places it; the newest
+    #    upload should be the FIRST thumbnail. Only click if the canvas is still empty.
+    if not canvas_has_object(img, ox, oy):
+        _send_click(ox + ED["ed_lib_thumb1"][0], oy + ED["ed_lib_thumb1"][1])
+        time.sleep(2.0)
+        img = os_snap(pg, "placed")
+    log(f"canvas object detected: {canvas_has_object(img, ox, oy)}")
+
+    # 7. 制作 -> 切割预览. SNAP ONLY — nothing inside the preview is clicked (the 切割
+    #    button offset gets measured from this snap; sizing comes next round too).
+    _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
+    time.sleep(4.0)
+    os_snap(pg, "cut_preview")
+    log("CHECKPOINT 2 reached — image uploaded + placed (default size), 制作 clicked, "
+        "preview snapped, NOTHING in the preview was clicked (no ribbon).")
     return done(True)
 
 
