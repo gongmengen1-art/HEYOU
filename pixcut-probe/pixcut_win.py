@@ -10,16 +10,21 @@ screencapture. This module does the same on Windows with:
                  can never intercept/mangle keystrokes)
   * psutil     — find / restart the Liene process
 
-DRIVER ARCHITECTURE (settled 2026-07-06 after the injection dead-end):
-  * ALL synthetic OS input (pyautogui / SendInput / PostMessage) is silently dropped
-    before reaching this app (clicktest: 0.0% effect, no overlay, correct foreground,
-    injection APIs "succeed") — pixel clicking is DEAD on Windows.
-  * The flow therefore runs entirely over the Chrome DevTools Protocol against the app's
-    WebView2 (relaunched with --remote-debugging-port): buttons are clicked by their DOM
-    text via trusted in-page Input events, the upload feeds input[type=file] directly
-    (no native dialog), the 高级 W/H/X/Y fields are read/written as DOM inputs, and every
-    step saves a CDP screenshot to logs\cal_NN_<step>.png.
-  * CDP probe verified 2026-07-06: page 'mingshashan' at jiyin.hannto.com, DOM reads fine.
+DRIVER ARCHITECTURE (settled 2026-07-06 after canvasprobe + fluttertest):
+  * The app is a MIX: the Home/community content is a WebView2 page ('mingshashan' at
+    jiyin.hannto.com), but the 创建设计 modal AND the whole editor are NATIVE FLUTTER UI
+    (open editor => still only the home CDP target; modal absent from the DOM).
+  * Input rules learned the hard way:
+      - WEB content ignores ALL OS-injected input (SendInput 'succeeds', zero effect —
+        dropped in the Flutter->webview forwarding), but CDP Input events work fine.
+      - FLUTTER UI accepts SendInput (fluttertest clicked 用于4*7相纸 and the editor
+        opened) — the mac-style pixel automation works for everything native.
+  * So the driver is HYBRID: CDP click for the home 画板 button, SendInput pixel clicks
+    (offsets measured off OS screenshots, window-relative) for the Flutter modal and the
+    editor. Every step saves an OS screenshot to logs\cal_NN_<step>.png.
+  * The Windows Flutter editor is NOT the mac web editor: layout/labels differ (left
+    toolbar 模板库/元素/AI实验室/上传/文字/形状/我的项目; right panel 背景/图片填充;
+    top-right teal 制作). Its post-upload UI is being calibrated round by round.
 
 COMMANDS
   probe          report geometry + full screenshot (calibration step 1)
@@ -852,120 +857,149 @@ class CdpUI:
             log(f"(snap {tag} failed: {e})")
 
 
-# ---- the CDP print flow -----------------------------------------------------------
-def _fail(ui, tag):
-    log(f"ERROR at step {tag!r} — visible texts: {ui.texts()}")
-    ui.snap("FAIL_" + tag)
+# ---- the HYBRID print flow (CDP for web home, SendInput for Flutter UI) -----------
+# Window-relative offsets for the FLUTTER surfaces, measured off OS screenshots
+# (window origin from pygetwindow; calibrated at the standard 1296x768 window, 100% DPI).
+ED = {
+    "ft_4x7_box":     (526, 305),   # 创建设计 modal: 用于4*7相纸 box (VERIFIED by fluttertest)
+    "ed_upload_tool": (41, 262),    # editor left toolbar: 上传 (from cal_ft_after.png)
+    "ed_make_btn":    (1243, 52),   # editor top-right: teal 制作 (from cal_ft_after.png)
+}
+ED_MAKE_REGION = (1150, 30, 1290, 75)   # rel region where the teal 制作 button lives
+
+
+def find_teal_px(img, x0, y0, x1, y1, min_px=40):
+    """Teal-accent detector on an OS screenshot (absolute px, scale 1.0). Returns the
+    cluster centroid or None."""
+    px = img.load()
+    pts = []
+    for y in range(max(0, int(y0)), min(img.height, int(y1)), 2):
+        for x in range(max(0, int(x0)), min(img.width, int(x1)), 2):
+            r, g, b = px[x, y]
+            if g > 165 and b > 155 and r < 155 and (g - r) > 35 and abs(g - b) < 65:
+                pts.append((x, y))
+    if len(pts) < min_px:
+        return None
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    return cx, cy
+
+
+def os_snap(pg, tag):
+    """Full-screen OS screenshot into the cal_NN series (captures Flutter UI, which CDP
+    screenshots cannot). Returns the RGB image for vision checks."""
+    path = os.path.join(LOGS_DIR, f"cal_{len(SNAPS):02d}_{tag}.png")
+    img = pg.screenshot()
+    img.save(path)
+    SNAPS.append((tag, path))
+    log(f"snap -> {path}")
+    return img.convert("RGB")
+
+
+def wait_file_dialog(gw, appear=True, timeout=10.0):
+    """Wait for the native open dialog (title 打开/Open) to appear/disappear."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        titles = [t.strip() for t in gw.getAllTitles() if t.strip()]
+        found = any(t == "打开" or t.startswith("打开") or t == "Open" for t in titles)
+        if found == appear:
+            return True
+        time.sleep(0.5)
     return False
 
 
-def _cdp_steps(ui, image, dry_run, margin):
-    from PIL import Image as PILImage
-    ui.snap("home")
-
-    # 1. + 画板 -> 创建设计 modal (web modal, fully in the DOM)
-    if not ui.click_text("画板"):
-        return _fail(ui, "no_huaban_btn")
-    if not ui.wait_text("4*7", timeout=10, exact=False):
-        return _fail(ui, "create_modal")
-    ui.snap("create_modal")
-
-    # 2. the 用于4*7相纸 blank-canvas card; the editor may open as a NEW webview
-    card = ui.find_card("4*7")
-    if not card:
-        return _fail(ui, "no_4x7_card")
-    ui.click_xy(card["x"], card["y"], 2.0)
-    ui.repick_new(timeout=10.0)
-    if not ui.wait_text("制作", timeout=30):
-        return _fail(ui, "editor")
-    ui.snap("editor")
-
-    # 3. left toolbar 上传 -> panel with 上传图片
-    if not ui.click_text("上传"):
-        return _fail(ui, "no_upload_tool")
-    if not ui.wait_text("上传图片", timeout=10):
-        return _fail(ui, "upload_panel")
-    ui.snap("upload_panel")
-
-    # 4. feed the image (CDP interception — no native dialog), then 效果图 -> 应用
-    if not ui.upload_file(image):
-        return _fail(ui, "upload")
-    if not ui.wait_text("应用", timeout=30):
-        return _fail(ui, "effect_modal")
-    ui.snap("effect_modal")
-    if not ui.click_text("应用", settle=2.5):
-        return _fail(ui, "apply")
-    ui.snap("placed")
-
-    # 5. fit + center via the 高级 fields (aspect from the image file)
-    iw, ih = PILImage.open(image).size
-    aspect = iw / ih
-    aw, ah = CANVAS_W_IN - 2 * margin, CANVAS_H_IN - 2 * margin
-    W = min(aw, ah * aspect)
-    H = W / aspect
-    W, H = round(W, 2), round(H, 2)
-    X, Y = round((CANVAS_W_IN - W) / 2, 2), round((CANVAS_H_IN - H) / 2, 2)
-    f = ui.field_by_label("W")
-    if f:
-        log(f"fit: aspect={aspect:.3f} -> {W}x{H}in at ({X},{Y})  "
-            f"(W field currently {f.get('v')!r})")
-        for lab, val in (("W", W), ("H", H), ("X", X), ("Y", Y)):
-            ui.set_field(lab, val)
-        f2 = ui.field_by_label("W")
-        log(f"W reads back {(f2 or {}).get('v')!r}")
-    else:
-        log(f"WARN: no W field found — skipping fit; visible texts: {ui.texts()}")
-    ui.snap("after_fit")
-
-    # 6. 制作 -> 切割预览
-    if not ui.click_text("制作", settle=3.0):
-        return _fail(ui, "no_make_btn")
-    if not ui.wait_text("切割", timeout=25):
-        return _fail(ui, "cut_preview")
-    ui.snap("cut_preview")
-
-    if dry_run:
-        log("DRY RUN — reached 切割预览; NOT clicking 切割 (no print, no ribbon).")
-        ui.esc()
-        time.sleep(1.0)
-        if ui.find_text("切割"):
-            ui.js("""(()=>{const c=[...document.querySelectorAll(
- '[class*=close],[class*=Close]')].find(e=>e.getBoundingClientRect().width>1);
- if (c) { c.click(); return true; } return false;})()""")
-            time.sleep(1.0)
-        ui.snap("after_close")
-        return True
-
-    # REAL print — consumes ribbon. Only reachable from the print command.
-    if not ui.click_text("切割", settle=2.0):
-        return _fail(ui, "cut_click")
-    log("clicked 切割 — printing")
-    wait_done()
-    ui.snap("after_print")
-    return True
-
-
-def cdp_flow(image, dry_run=True, margin=0.0):
-    """The full print flow over CDP. dry_run stops at the 切割预览 (NO ribbon)."""
+def hybrid_flow(image, dry_run=True):
+    """Home (CDP) -> 创建设计 modal -> 4x7 editor -> 上传 (SendInput). CURRENT CHECKPOINT:
+    stops after feeding the image — the editor's post-upload UI (placement, 制作, 切割预览)
+    is Flutter-native and unseen yet; it gets calibrated from this run's screenshots."""
+    _require_win()
+    _dpi_aware()
+    pg, gw, clip, _Image = _deps()
     image = os.path.abspath(image)
     if not os.path.exists(image):
         sys.exit(f"ERROR: image not found: {image}")
     clear_snaps()
-    ui = CdpUI()
-    if not ui.find_text("画板"):
+
+    def done(ok):
+        log("=" * 60)
+        log(("CHECKPOINT REACHED" if ok else "FAILED") + " — this build stops after the "
+            "upload step; the remaining editor steps get calibrated from these snaps.")
+        log(f"{len(SNAPS)} step screenshots:")
+        for tag, path in SNAPS:
+            log(f"  {path}")
+        log("-> send me ALL logs\\cal_*.png plus this console output.")
+        return ok
+
+    # 1. Home via CDP (web content — only CDP clicks reach it)
+    cui = CdpUI()
+    if not cui.find_text("画板"):
         log("not on the home page — restarting the app for a clean start")
         restart_liene_with_cdp()
-        ui = CdpUI()
-        if not ui.wait_text("画板", timeout=20):
-            return _fail(ui, "home")
-    ok = _cdp_steps(ui, image, dry_run, margin)
-    log("=" * 60)
-    log(("DRY-RUN " if dry_run else "PRINT ") + ("COMPLETED" if ok else "FAILED"))
-    log(f"{len(SNAPS)} step screenshots:")
-    for tag, path in SNAPS:
-        log(f"  {path}")
-    log("-> send me ALL logs\\cal_*.png plus this console output.")
-    return ok
+        cui = CdpUI()
+        if not cui.wait_text("画板", timeout=25):
+            log(f"ERROR: home never appeared; texts: {cui.texts()}")
+            return done(False)
+    win = find_liene_window(gw)
+    if win is None:
+        sys.exit("ERROR: Liene window not found")
+    try:
+        if win.isMinimized:
+            win.restore()
+        win.activate()
+        time.sleep(0.6)
+    except Exception:  # noqa: BLE001
+        pass
+    ox, oy = win.left, win.top
+    log(f"window @({ox},{oy}) {win.width}x{win.height}")
+    os_snap(pg, "home")
+
+    # 2. 画板 (CDP) -> Flutter 创建设计 modal
+    p = cui.find_text("画板")
+    cui.click_xy(p["x"], p["y"], 2.0)
+    os_snap(pg, "create_modal")
+
+    # 3. 用于4*7相纸 box (SendInput on Flutter) -> editor
+    _send_click(ox + ED["ft_4x7_box"][0], oy + ED["ft_4x7_box"][1])
+    time.sleep(3.5)
+    img = os_snap(pg, "editor")
+    if not find_teal_px(img, ox + ED_MAKE_REGION[0], oy + ED_MAKE_REGION[1],
+                        ox + ED_MAKE_REGION[2], oy + ED_MAKE_REGION[3]):
+        log("ERROR: editor did not open (teal 制作 not found top-right)")
+        return done(False)
+    log("editor open (制作 button detected)")
+
+    # 4. 上传 tool (SendInput)
+    _send_click(ox + ED["ed_upload_tool"][0], oy + ED["ed_upload_tool"][1])
+    time.sleep(1.8)
+    os_snap(pg, "after_upload_tool")
+
+    # 5. native file dialog (standard Win32 — keyboard injection works there)
+    if wait_file_dialog(gw, appear=True, timeout=8.0):
+        os_snap(pg, "file_dialog")
+        clip.copy(image)
+        time.sleep(0.2)
+        pg.hotkey("alt", "n")
+        time.sleep(0.3)
+        pg.hotkey("ctrl", "a")
+        time.sleep(0.2)
+        pg.hotkey("ctrl", "v")
+        time.sleep(0.4)
+        pg.press("enter")
+        if not wait_file_dialog(gw, appear=False, timeout=12.0):
+            os_snap(pg, "FAIL_dialog_stuck")
+            log("ERROR: the open dialog did not close (path paste may have failed)")
+            return done(False)
+        time.sleep(3.0)
+        os_snap(pg, "after_upload")
+        log("image fed to the editor — next round continues from here "
+            "(placement/fit -> 制作 -> 切割预览)")
+        return done(True)
+
+    # no dialog: an in-app (Flutter) upload panel probably opened instead
+    log("no native file dialog appeared — an in-app upload panel may have opened; "
+        "the snap shows what to calibrate next")
+    os_snap(pg, "upload_panel_unknown")
+    return done(True)
 
 
 # ---- create-canvas diagnostics --------------------------------------------------
@@ -1244,7 +1278,7 @@ def main():
         if not args.image:
             sys.exit("usage: pixcut_win.py dryrun <image>  "
                      "(e.g. pixcut-probe\\samples\\sample_4x7.jpg)")
-        cdp_flow(args.image, dry_run=True, margin=args.margin)
+        hybrid_flow(args.image, dry_run=True)
     elif args.command == "print":
         if not CALIBRATED:
             sys.exit("REFUSING to print: the Windows flow is not calibrated yet "
@@ -1252,7 +1286,7 @@ def main():
                      "cal_*.png screenshots; printing consumes ribbon.")
         if not args.image:
             sys.exit("usage: pixcut_win.py print <image>")
-        cdp_flow(args.image, dry_run=False, margin=args.margin)
+        hybrid_flow(args.image, dry_run=False)
 
 
 if __name__ == "__main__":
