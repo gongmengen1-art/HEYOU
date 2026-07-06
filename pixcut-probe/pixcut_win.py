@@ -968,6 +968,96 @@ def cdp_flow(image, dry_run=True, margin=0.0):
     return ok
 
 
+# ---- create-canvas diagnostics --------------------------------------------------
+# First CDP dryrun: clicking 画板 succeeded but NO 创建设计 modal appeared in the DOM
+# (home texts unchanged). Candidate explanations: (a) the modal opens in a NEW webview,
+# (b) the modal is native Flutter UI triggered via hanntoJsBridge (CDP can't see it, but
+# we could call the bridge directly), (c) the in-page click didn't trigger the handler.
+# These two commands separate the cases in one round trip.
+
+def _dump_bridge(ui):
+    names = ui.js("Object.getOwnPropertyNames(window)"
+                  ".filter(k=>/bridge|hannto|flutter|native|jiyin/i.test(k))")
+    log(f"bridge-ish globals: {names}")
+    for obj in (names or []):
+        t = ui.js(f"typeof window[{_js_str(obj)}]")
+        keys = ui.js(
+            "(()=>{try{const o=window[%s]; if(!o) return null; const ks=new Set();"
+            " for(const k in o) ks.add(k);"
+            " Object.getOwnPropertyNames(o).forEach(k=>ks.add(k));"
+            " const pr=Object.getPrototypeOf(o);"
+            " if(pr) Object.getOwnPropertyNames(pr).forEach(k=>ks.add(k));"
+            " return [...ks];}catch(e){return String(e)}})()" % _js_str(obj))
+        log(f"  window.{obj}: typeof={t} keys={keys}")
+
+
+def canvasprobe():
+    """Click 画板 over CDP and collect evidence about what (if anything) opens:
+    new CDP targets, DOM texts, a CDP snap AND an OS-level screenshot (a native Flutter
+    modal shows only in the latter). Also enumerates the hanntoJsBridge surface."""
+    _require_win()
+    _dpi_aware()
+    ui = CdpUI()
+    clear_snaps()
+    _dump_bridge(ui)
+    p = ui.find_text("画板")
+    log(f"画板 element rect: {p}")
+    before = {t.get("id") for t in cdp_pages(timeout=3.0)}
+    ui.snap("before_huaban")
+    if p:
+        ui.click_xy(p["x"], p["y"], 2.5)
+    else:
+        log("WARN: 画板 not found in DOM")
+    after = cdp_pages(timeout=3.0)
+    log("CDP targets after the click:")
+    for t in after:
+        mark = "NEW  " if t.get("id") not in before else "     "
+        log(f"  {mark}title={t.get('title')!r} url={t.get('url')!r}")
+    log(f"DOM texts now: {ui.texts(40)}")
+    ui.snap("after_huaban_dom")
+    try:
+        pg, _gw, _clip, _Image = _deps()
+        osshot = os.path.join(LOGS_DIR, "cal_os_after_huaban.png")
+        pg.screenshot().save(osshot)
+        log(f"OS screenshot -> {osshot}  (shows native/Flutter overlays that CDP can't)")
+    except Exception as e:  # noqa: BLE001
+        log(f"(OS screenshot failed: {e})")
+    log("-> send console output + ALL logs\\cal_*.png")
+
+
+def pages_cmd():
+    """List every CDP page target with its URL and visible texts. Run this AFTER manually
+    navigating the app into the editor — it reveals where the editor lives (same page?
+    new webview? which URL?) and the editor's real button labels."""
+    _require_win()
+    pages = cdp_pages(timeout=8.0)
+    if not pages:
+        log("no CDP targets — start the app via the 'cdp' command first")
+        return
+    log(f"{len(pages)} page target(s):")
+    for i, t in enumerate(pages):
+        log(f"  [{i}] title={t.get('title')!r} url={t.get('url')!r}")
+        if not (t.get("url") or "").startswith("http"):
+            continue
+        try:
+            s = CdpSession(t["webSocketDebuggerUrl"])
+            texts = s.eval("""(()=>{const out=[], seen=new Set();
+ for (const e of document.querySelectorAll('*')) {
+   if (e.children.length) continue;
+   const r = e.getBoundingClientRect();
+   if (r.width < 2 || r.height < 2) continue;
+   const t = ((e.innerText || e.value || '') + '').trim();
+   if (t && t.length <= 18 && !seen.has(t)) { seen.add(t); out.push(t); }
+   if (out.length >= 60) break;
+ }
+ return out;})()""")
+            log(f"      texts: {texts}")
+            s.close()
+        except Exception as e:  # noqa: BLE001
+            log(f"      (attach failed: {e})")
+    log("-> send console output.")
+
+
 # ---- Liene log discovery (job polling) ---------------------------------------
 def liene_log_files():
     """Find the Windows Liene app's own liene_photo_pc_*.log files (location unknown a
@@ -1050,9 +1140,12 @@ def wait_done(timeout=300):
 def main():
     ap = argparse.ArgumentParser(description="Windows Liene-app UI automation (PixCut S1).")
     ap.add_argument("command",
-                    choices=["probe", "clicktest", "cdp", "dryrun", "print", "logscan"],
+                    choices=["probe", "clicktest", "cdp", "canvasprobe", "pages",
+                             "dryrun", "print", "logscan"],
                     help="probe = geometry report; clicktest = diagnose click injection; "
                          "cdp = restart app with WebView2 remote debugging + DOM probe; "
+                         "canvasprobe = click 画板 + collect evidence of what opens; "
+                         "pages = list all CDP targets + their texts (run in the editor); "
                          "dryrun = full flow WITHOUT printing (saves step screenshots); "
                          "logscan = find the app's log files; "
                          "print = real print (disabled until calibrated)")
@@ -1068,6 +1161,10 @@ def main():
         clicktest()
     elif args.command == "cdp":
         cdp()
+    elif args.command == "canvasprobe":
+        canvasprobe()
+    elif args.command == "pages":
+        pages_cmd()
     elif args.command == "logscan":
         logscan()
     elif args.command == "dryrun":
