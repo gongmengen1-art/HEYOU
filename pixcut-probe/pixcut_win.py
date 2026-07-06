@@ -10,12 +10,16 @@ screencapture. This module does the same on Windows with:
                  can never intercept/mangle keystrokes)
   * psutil     — find / restart the Liene process
 
-CALIBRATION STATE (probe run 2026-07-06, screen 1600x900 @100%, window 1296x768@(152,46)):
-  * The Windows app is the SAME Creativerse web UI as macOS at nearly the same client size
-    (mac 1280x760): the web-content offsets transfer ~1:1 (measured: + 画板 mac (1103,55)
-    vs win (1101,55)). Native title bar differs (home_btn re-measured for Windows).
-  * Offsets marked "mac guess" below are unverified — the `dryrun` command snapshots every
-    step to logs\cal_NN_<step>.png so they can be corrected from one run's screenshots.
+DRIVER ARCHITECTURE (settled 2026-07-06 after the injection dead-end):
+  * ALL synthetic OS input (pyautogui / SendInput / PostMessage) is silently dropped
+    before reaching this app (clicktest: 0.0% effect, no overlay, correct foreground,
+    injection APIs "succeed") — pixel clicking is DEAD on Windows.
+  * The flow therefore runs entirely over the Chrome DevTools Protocol against the app's
+    WebView2 (relaunched with --remote-debugging-port): buttons are clicked by their DOM
+    text via trusted in-page Input events, the upload feeds input[type=file] directly
+    (no native dialog), the 高级 W/H/X/Y fields are read/written as DOM inputs, and every
+    step saves a CDP screenshot to logs\cal_NN_<step>.png.
+  * CDP probe verified 2026-07-06: page 'mingshashan' at jiyin.hannto.com, DOM reads fine.
 
 COMMANDS
   probe          report geometry + full screenshot (calibration step 1)
@@ -59,34 +63,9 @@ CALIBRATED = False
 # Expected window size (from probe 2026-07-06). Offsets are only valid near this.
 EXPECT_W, EXPECT_H = 1296, 768
 
-# Per-control offsets in *physical pixels*, relative to the Liene window's top-left
-# (pygetwindow win.left/win.top). "measured" = read off the 2026-07-06 Windows probe
-# screenshot; "mac guess" = ported verbatim from print_via_app.py (same web UI, verify
-# via dryrun snapshots).
-OFF: dict[str, tuple[int, int]] = {
-    "home_btn":      (133, 16),    # measured: 🏠首页 in the native title bar
-    "huaban_btn":    (1101, 55),   # measured: teal "+ 画板" on Home (also teal-detected)
-    "blank_plus":    (517, 305),   # mac guess: 创建设计 modal, "+" 用于4*7相纸 box
-    "upload_tool":   (34, 261),    # mac guess: left toolbar 上传
-    "upload_btn":    (234, 97),    # mac guess: teal 上传图片 at the upload panel top
-    "apply_btn":     (640, 645),   # mac guess: teal 应用 in the 效果图 modal
-    "ai_cutout":     (1157, 717),  # mac guess: right panel 工具 > AI抠图
-    "next_btn":      (643, 656),   # mac guess: teal 下一步 in the AI抠图 modal
-    "fld_w":         (1092, 508),  # mac guess: 高级 W field
-    "fld_h":         (1185, 508),  # mac guess: 高级 H field
-    "fld_x":         (1092, 548),  # mac guess: 高级 X field
-    "fld_y":         (1185, 548),  # mac guess: 高级 Y field
-    "make_btn":      (1235, 52),   # mac guess: pale-teal 制作 (top-right 2nd row)
-    "cut_btn":       (840, 592),   # mac guess: teal 切割 in 切割预览 — PRINTS, dryrun never clicks
-    "cut_preview_x": (759, 120),   # mac guess: ✕ of the 切割预览 modal
-}
-
-# Window-relative rects (x0,y0,x1,y1) used by the teal detector / vision, ported from macOS.
-RECT_HUABAN = (980, 35, 1290, 80)      # home: teal + 画板 button row
-RECT_UPLOAD = (10, 80, 440, 125)       # editor: teal 上传图片 at upload-panel top
-RECT_MODAL_BOTTOM = (300, 560, 980, 700)   # 效果图 / AI抠图 modal: teal 应用 / 下一步
-RECT_CUT = (620, 560, 1020, 660)       # 切割预览: teal 切割 button
-RECT_CANVAS = (255, 95, 1005, 710)     # editor canvas viewport (object detection)
+# (The per-control pixel OFFSETS and teal-detection rects that drove the first dryrun
+# attempt were removed with the pixel-click path — the CDP driver finds controls by their
+# DOM text instead.)
 
 
 def log(*a):
@@ -310,69 +289,6 @@ class UI:
                 pass
         time.sleep(0.4)
 
-    def abs(self, name):
-        dx, dy = OFF[name]
-        return self.ox + dx, self.oy + dy
-
-    def click_pt(self, x, y, settle=0.6):
-        self.activate()
-        n = _send_click(int(x), int(y))
-        if n != 2:
-            log(f"WARN: SendInput injected {n}/2 events at ({int(x)},{int(y)}); "
-                "falling back to pyautogui")
-            self._pg.click(int(x), int(y))
-        time.sleep(settle)
-
-    def click(self, name, settle=0.8):
-        x, y = self.abs(name)
-        self.click_pt(x, y, settle)
-
-    def hotkey(self, *keys):
-        self._pg.hotkey(*keys)
-        time.sleep(0.15)
-
-    def press(self, key):
-        self._pg.press(key)
-        time.sleep(0.15)
-
-    def esc(self):
-        self.press("esc")
-        time.sleep(0.3)
-
-    def clip_set(self, text):
-        self._clip.copy(str(text))
-
-    def clip_get(self):
-        return self._clip.paste()
-
-    def paste_text(self, text):
-        """Type text IME-safely: put it on the clipboard and Ctrl+V."""
-        self.clip_set(text)
-        time.sleep(0.15)
-        self.hotkey("ctrl", "v")
-        time.sleep(0.2)
-
-    def type_field(self, name, value):
-        """Click a field, select-all, paste the value, Enter."""
-        x, y = self.abs(name)
-        self.click_pt(x, y, 0.4)
-        self.hotkey("ctrl", "a")
-        self.paste_text(value)
-        self.press("enter")
-        time.sleep(0.5)
-
-    def read_field(self, name):
-        """Click a field, select-all + copy, return the clipboard text (its value)."""
-        x, y = self.abs(name)
-        self.click_pt(x, y, 0.4)
-        sentinel = "«pixcut-sentinel»"       # no NULs — Windows clipboard truncates at \x00
-        self.clip_set(sentinel)
-        self.hotkey("ctrl", "a")
-        self.hotkey("ctrl", "c")
-        time.sleep(0.25)
-        val = self.clip_get() or ""
-        return "" if val == sentinel else val.strip()
-
     def shot(self, path=None):
         self.activate()
         time.sleep(0.2)
@@ -388,52 +304,6 @@ class UI:
     def pt2px(self, x, y):
         return int(x * self.scale), int(y * self.scale)
 
-    def rect_abs(self, rect):
-        """Window-relative (x0,y0,x1,y1) -> absolute points rect."""
-        x0, y0, x1, y1 = rect
-        return self.ox + x0, self.oy + y0, self.ox + x1, self.oy + y1
-
-
-def find_teal(img, ui, x0, y0, x1, y1, pick="bottom", min_px=40):
-    """Teal accent button inside the points-rect (x0,y0)-(x1,y1). Same detector as macOS.
-    Requires at least `min_px` matching samples so stray anti-aliased edges don't register."""
-    px = img.load()
-    X0, Y0 = ui.pt2px(x0, y0)
-    X1, Y1 = ui.pt2px(x1, y1)
-    pts = []
-    for y in range(max(0, int(Y0)), min(img.height, int(Y1)), 2):
-        for x in range(max(0, int(X0)), min(img.width, int(X1)), 2):
-            r, g, b = px[x, y]
-            if g > 165 and b > 155 and r < 155 and (g - r) > 35 and abs(g - b) < 65:
-                pts.append((x, y))
-    if len(pts) < min_px:
-        return None
-    if pick == "bottom":
-        ymax = max(p[1] for p in pts)
-        pts = [p for p in pts if p[1] > ymax - 80]
-    cx = sum(p[0] for p in pts) / len(pts)
-    cy = sum(p[1] for p in pts) / len(pts)
-    return ui.px2pt(cx, cy)
-
-
-def object_bbox_px(img, ui, region_px, cyan_only=False):
-    """Bounding box (PIXELS) of a placed object inside region_px=(x0,y0,x1,y1)."""
-    px = img.load()
-    x0, y0, x1, y1 = region_px
-    xs, ys = [], []
-    for y in range(int(y0), int(y1), 2):
-        for x in range(int(x0), int(x1), 2):
-            r, g, b = px[x, y]
-            if cyan_only:
-                if g > 185 and b > 195 and r < 130 and (b - r) > 80:
-                    xs.append(x); ys.append(y)
-            else:
-                if min(r, g, b) < 233:
-                    xs.append(x); ys.append(y)
-    if len(xs) < 20:
-        return None
-    return min(xs), min(ys), max(xs), max(ys)
-
 
 # ---- step snapshots (calibration) -------------------------------------------
 SNAPS: list[tuple[str, str]] = []
@@ -447,13 +317,6 @@ def clear_snaps():
         except OSError:
             pass
     SNAPS.clear()
-
-
-def snap(ui, tag):
-    path = os.path.join(LOGS_DIR, f"cal_{len(SNAPS):02d}_{tag}.png")
-    ui.shot(path)
-    SNAPS.append((tag, path))
-    log(f"snap -> {path}")
 
 
 # ---- window setup -----------------------------------------------------------
@@ -477,173 +340,6 @@ def make_ui():
         log(f"WARN: window size {win.width}x{win.height} differs from calibrated "
             f"{EXPECT_W}x{EXPECT_H}; offsets may be off. Don't resize the app window.")
     return UI(win.left, win.top, 1.0)
-
-
-# ---- high-level steps (ported from print_via_app.py) --------------------------
-def on_home(ui, img=None):
-    """Home page shows the teal + 画板 button top-right; the editor doesn't."""
-    if img is None:
-        img = ui.shot()
-    return find_teal(img, ui, *ui.rect_abs(RECT_HUABAN), pick="any")
-
-
-def go_home(ui):
-    """Back to the Creativerse home page from anywhere. Click twice — the 1st click may only
-    dismiss an overlay (e.g. 任务队列), the 2nd navigates. Idempotent once on home."""
-    for _ in range(2):
-        ui.click("home_btn", settle=1.3)
-
-
-def go_fresh(ui):
-    """Home -> + 画板 -> 创建设计 -> blank 4x7 canvas."""
-    log("navigating Home -> blank 4x7 canvas")
-    p = on_home(ui)
-    if p:
-        ui.click_pt(p[0], p[1], 1.5)
-    else:
-        ui.click("huaban_btn", settle=1.5)
-    snap(ui, "create_modal")
-    ui.click("blank_plus", settle=3.0)
-    snap(ui, "editor")
-
-
-def clear_canvas(ui):
-    """Delete any object currently on the canvas (so the next image doesn't overlap)."""
-    img = ui.shot()
-    r = ui.rect_abs(RECT_CANVAS)
-    region = (*ui.pt2px(r[0], r[1]), *ui.pt2px(r[2], r[3]))
-    bb = object_bbox_px(img, ui, region, cyan_only=False)
-    if not bb:
-        log("canvas already clear")
-        return
-    cx, cy = ui.px2pt((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2)
-    top = ui.px2pt(0, bb[1])[1]
-    ui.click_pt(cx, cy, 0.7)            # select
-    ui.click_pt(cx, top - 49, 0.9)      # floating 🗑 ~49px above the object top
-    log("deleted existing object")
-    time.sleep(0.5)
-
-
-def open_upload_panel(ui):
-    """Ensure the left 上传 panel is open (clicking the tool toggles it). Detect via the
-    teal 上传图片 button at the panel top; re-check AFTER each toggle click."""
-    rect = ui.rect_abs(RECT_UPLOAD)
-    for _ in range(4):
-        if find_teal(ui.shot(), ui, *rect, pick="any"):
-            return True
-        ui.click("upload_tool", settle=1.3)
-        if find_teal(ui.shot(), ui, *rect, pick="any"):
-            return True
-    return False
-
-
-def wait_file_dialog(ui, appear=True, timeout=10.0):
-    """Wait for the native open dialog (title 打开/Open) to appear/disappear."""
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        titles = [t.strip() for t in ui._gw.getAllTitles() if t.strip()]
-        found = any(t in ("打开", "Open") or t.startswith("打开") for t in titles)
-        if found == appear:
-            return True
-        time.sleep(0.5)
-    return False
-
-
-def upload_image(ui, image_path):
-    """Assumes the upload panel is open. Pick the file via the native open dialog and place
-    the original onto the canvas (应用). Aborts (returns False) if a stage doesn't verify."""
-    img = ui.shot()
-    p = find_teal(img, ui, *ui.rect_abs(RECT_UPLOAD), pick="any")
-    if p:
-        ui.click_pt(p[0], p[1], 1.5)     # teal 上传图片 -> native open dialog
-    else:
-        ui.click("upload_btn", settle=1.5)
-    if not wait_file_dialog(ui, appear=True):
-        snap(ui, "FAIL_no_file_dialog")
-        log("ERROR: native open dialog did not appear")
-        return False
-    snap(ui, "file_dialog")
-    # Alt+N focuses the 文件名 field (works on zh/en Windows); paste the path, Enter.
-    ui.hotkey("alt", "n")
-    ui.hotkey("ctrl", "a")
-    ui.paste_text(os.path.abspath(image_path))
-    ui.press("enter")
-    if not wait_file_dialog(ui, appear=False):
-        snap(ui, "FAIL_dialog_stuck")
-        log("ERROR: open dialog did not close after Enter")
-        return False
-    time.sleep(2.5)
-    snap(ui, "effect_modal")
-    # 效果图 modal -> teal 应用 (place original)
-    img = ui.shot()
-    p = find_teal(img, ui, *ui.rect_abs(RECT_MODAL_BOTTOM), pick="bottom")
-    if not p:
-        snap(ui, "FAIL_no_apply_btn")
-        log("ERROR: 效果图 modal / teal 应用 not found")
-        return False
-    ui.click_pt(p[0], p[1], 2.0)
-    snap(ui, "placed")
-    log("image placed (original)")
-    return True
-
-
-def fit_and_center(ui, aspect, margin=0.0):
-    """Scale the placed object to fill the 4x7 canvas (no distortion) and center it.
-    First VERIFIES the field offsets by reading W back as a number; if that fails the
-    offsets are wrong — skip typing (don't feed values into an unknown control)."""
-    probe_val = ui.read_field("fld_w")
-    try:
-        float(probe_val)
-    except (ValueError, TypeError):
-        snap(ui, "FAIL_fields_unreadable")
-        log(f"WARN: 高级 W field read back {probe_val!r} (not a number) — field offsets "
-            "need calibration; SKIPPING fit (image keeps its default size)")
-        return False
-    if not aspect or aspect <= 0:
-        log("WARN: unknown aspect; skipping fit")
-        return False
-    aw = CANVAS_W_IN - 2 * margin
-    ah = CANVAS_H_IN - 2 * margin
-    W = min(aw, ah * aspect)
-    H = W / aspect
-    W = round(W, 2); H = round(H, 2)
-    X = round((CANVAS_W_IN - W) / 2, 2); Y = round((CANVAS_H_IN - H) / 2, 2)
-    log(f"fit: aspect={aspect:.3f} -> {W}x{H}in at ({X},{Y})")
-    ui.type_field("fld_w", W)
-    ui.type_field("fld_h", H)
-    ui.type_field("fld_x", X)
-    ui.type_field("fld_y", Y)
-    return True
-
-
-def open_cut_preview(ui):
-    ui.click("make_btn", settle=4.5)          # 制作 -> 切割预览 (has a load delay)
-    for _ in range(3):
-        img = ui.shot()
-        if find_teal(img, ui, *ui.rect_abs(RECT_CUT), pick="bottom"):
-            snap(ui, "cut_preview")
-            return True
-        time.sleep(1.5)
-    snap(ui, "FAIL_no_cut_preview")
-    log("WARN: 切割预览 did not open (制作 may have missed); check make_btn offset")
-    return False
-
-
-def close_cut_preview(ui):
-    ui.click("cut_preview_x", settle=0.8)
-    ui.esc()
-    snap(ui, "after_close")
-
-
-def do_print(ui):
-    """Click 切割 = REAL PRINT, consumes ribbon. Only reachable from the print command."""
-    img = ui.shot()
-    p = find_teal(img, ui, *ui.rect_abs(RECT_CUT), pick="bottom")
-    if p:
-        ui.click_pt(p[0], p[1], 1.0)
-    else:
-        ui.click("cut_btn", settle=1.0)
-    log("clicked 切割 — printing")
 
 
 # ---- click-injection diagnosis ------------------------------------------------
@@ -813,6 +509,7 @@ class CdpSession:
         # header unless --remote-allow-origins matches; sending none is always accepted.
         self._ws = websocket.create_connection(ws_url, timeout=15, suppress_origin=True)
         self._id = 0
+        self.events = []          # buffered CDP events (e.g. Page.fileChooserOpened)
 
     def cmd(self, method, **params):
         import json
@@ -824,7 +521,34 @@ class CdpSession:
                 if "error" in msg:
                     raise RuntimeError(f"CDP {method}: {msg['error']}")
                 return msg.get("result", {})
-            # else: an event — ignore
+            if msg.get("method"):
+                self.events.append(msg)
+                if len(self.events) > 300:
+                    del self.events[:150]
+
+    def wait_event(self, method, timeout=8.0):
+        """Return the next event with this method (buffered or incoming), or None."""
+        import json
+        for i, ev in enumerate(self.events):
+            if ev.get("method") == method:
+                return self.events.pop(i)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                self._ws.settimeout(max(0.3, deadline - time.time()))
+                msg = json.loads(self._ws.recv())
+            except Exception:  # noqa: BLE001  (timeout)
+                break
+            finally:
+                try:
+                    self._ws.settimeout(15)
+                except Exception:  # noqa: BLE001
+                    pass
+            if msg.get("method") == method:
+                return msg
+            if msg.get("method"):
+                self.events.append(msg)
+        return None
 
     def eval(self, expr, await_promise=False):
         r = self.cmd("Runtime.evaluate", expression=expr, returnByValue=True,
@@ -879,6 +603,369 @@ def cdp():
         s.close()
     log("CDP PROBE OK — DOM access works; the driver can move to CDP entirely.")
     log("-> send me this console output.")
+
+
+# ---- CDP UI driver --------------------------------------------------------------
+def _js_str(s):
+    import json as _json
+    return _json.dumps(str(s), ensure_ascii=False)
+
+
+class CdpUI:
+    """DOM-level driver for the Creativerse webview. All interaction goes through CDP:
+    clicks are trusted in-page Input events at an element's rect (found by its TEXT, so
+    nothing depends on window pixels), uploads feed the file chooser directly, and the
+    高级 W/H/X/Y fields are read/written as DOM inputs."""
+
+    def __init__(self):
+        pages = cdp_pages(timeout=6.0)
+        if not any((p.get("url") or "").startswith("http") for p in pages):
+            log("CDP endpoint not up — restarting the app with remote debugging")
+            restart_liene_with_cdp()
+            pages = cdp_pages(timeout=60.0)
+        real = [p for p in pages if (p.get("url") or "").startswith("http")]
+        if not real:
+            sys.exit("ERROR: no CDP page target appeared — run the 'cdp' command and "
+                     "send me its output.")
+        self.known = {p.get("id") for p in pages}
+        self.s = None
+        self._attach(next((p for p in real
+                           if "mingshashan" in (p.get("title") or "").lower()), real[0]))
+
+    def _attach(self, target):
+        if self.s:
+            self.s.close()
+        self.s = CdpSession(target["webSocketDebuggerUrl"])
+        self.target = target
+        for dom in ("Page.enable", "DOM.enable", "Runtime.enable"):
+            try:
+                self.s.cmd(dom)
+            except Exception as e:  # noqa: BLE001
+                log(f"  ({dom} failed: {e})")
+        log(f"attached: {target.get('title')!r} {target.get('url')!r}")
+
+    def repick_new(self, timeout=10.0):
+        """The app may open a NEW webview for the editor (one per 画板 tab); if a new page
+        target appears, attach to it. Returns True if switched."""
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            for p in cdp_pages(timeout=1.0):
+                pid = p.get("id")
+                if pid and pid not in self.known and (p.get("url") or "").startswith("http"):
+                    self.known.add(pid)
+                    self._attach(p)
+                    return True
+            time.sleep(0.7)
+        return False
+
+    def js(self, expr):
+        return self.s.eval(expr)
+
+    # -- finding / clicking by DOM text --------------------------------------
+    def find_text(self, text, exact=True):
+        """Center of the SMALLEST visible element whose innerText matches. Returns
+        {x,y,w,h} in viewport CSS px (== CDP input coords) or None."""
+        return self.js("""(()=>{const T=%s, EX=%s;
+ const cs=[];
+ for (const e of document.querySelectorAll('*')) {
+   const r = e.getBoundingClientRect();
+   if (r.width < 2 || r.height < 2) continue;
+   const t = ((e.innerText || '') + '').trim();
+   if (!t) continue;
+   if (EX ? t === T : t.includes(T)) cs.push({r: r, a: r.width * r.height});
+ }
+ cs.sort((a, b) => a.a - b.a);
+ if (!cs.length) return null;
+ const r = cs[0].r;
+ return {x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
+         w: Math.round(r.width), h: Math.round(r.height)};})()"""
+                       % (_js_str(text), "true" if exact else "false"))
+
+    def find_card(self, text, min_h=60):
+        """Center of the clickable CARD containing the text (e.g. the 用于4*7相纸 canvas
+        box in the 创建设计 modal): first ancestor taller than min_h px."""
+        return self.js("""(()=>{const T=%s;
+ let leaf = null;
+ for (const e of document.querySelectorAll('*')) {
+   if (e.children.length) continue;
+   const t = ((e.innerText || '') + '').trim();
+   if (!t.includes(T)) continue;
+   const r = e.getBoundingClientRect();
+   if (r.width < 2) continue;
+   leaf = e; break;
+ }
+ if (!leaf) return null;
+ let p = leaf;
+ for (let i = 0; i < 6 && p; i++) {
+   const r = p.getBoundingClientRect();
+   if (r.height > %d && r.width > 60)
+     return {x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2)};
+   p = p.parentElement;
+ }
+ const r = leaf.getBoundingClientRect();
+ return {x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2)};})()"""
+                       % (_js_str(text), min_h))
+
+    def click_xy(self, x, y, settle=1.0):
+        for typ, extra in (("mouseMoved", {}),
+                           ("mousePressed", {"button": "left", "clickCount": 1}),
+                           ("mouseReleased", {"button": "left", "clickCount": 1})):
+            self.s.cmd("Input.dispatchMouseEvent", type=typ, x=x, y=y, **extra)
+            time.sleep(0.05)
+        time.sleep(settle)
+
+    def click_text(self, text, exact=True, settle=1.2):
+        p = self.find_text(text, exact)
+        if not p:
+            return False
+        self.click_xy(p["x"], p["y"], settle)
+        return True
+
+    def wait_text(self, text, timeout=12.0, exact=True):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            p = self.find_text(text, exact)
+            if p:
+                return p
+            time.sleep(0.6)
+        return None
+
+    def texts(self, max_items=100):
+        """Short visible leaf texts — the step-failure dump for calibration."""
+        return self.js("""(()=>{const out=[], seen=new Set();
+ for (const e of document.querySelectorAll('*')) {
+   if (e.children.length) continue;
+   const r = e.getBoundingClientRect();
+   if (r.width < 2 || r.height < 2) continue;
+   const t = ((e.innerText || e.value || '') + '').trim();
+   if (t && t.length <= 18 && !seen.has(t)) { seen.add(t); out.push(t); }
+   if (out.length >= %d) break;
+ }
+ return out;})()""" % max_items)
+
+    # -- keyboard -------------------------------------------------------------
+    def key(self, key, code, vk, text=None, modifiers=0):
+        down = dict(type="keyDown", key=key, code=code, windowsVirtualKeyCode=vk,
+                    nativeVirtualKeyCode=vk, modifiers=modifiers)
+        if text:
+            down["text"] = text
+        self.s.cmd("Input.dispatchKeyEvent", **down)
+        time.sleep(0.04)
+        self.s.cmd("Input.dispatchKeyEvent", type="keyUp", key=key, code=code,
+                   windowsVirtualKeyCode=vk, nativeVirtualKeyCode=vk, modifiers=modifiers)
+        time.sleep(0.1)
+
+    def esc(self):
+        self.key("Escape", "Escape", 27)
+
+    def enter(self):
+        self.key("Enter", "Enter", 13, text="\r")
+
+    def select_all(self):
+        self.key("a", "KeyA", 65, modifiers=2)   # 2 == Ctrl
+
+    def insert_text(self, s):
+        self.s.cmd("Input.insertText", text=str(s))
+        time.sleep(0.15)
+
+    # -- 高级 W/H/X/Y fields ---------------------------------------------------
+    def field_by_label(self, label):
+        """The 高级 panel labels its inputs W/H/X/Y — find the <input> nearest a label."""
+        return self.js("""(()=>{const L=%s;
+ let lab = null;
+ for (const e of document.querySelectorAll('*')) {
+   if (e.children.length) continue;
+   if (((e.innerText || '') + '').trim() !== L) continue;
+   const r = e.getBoundingClientRect();
+   if (r.width < 1) continue;
+   lab = e; break;
+ }
+ if (!lab) return null;
+ let p = lab;
+ for (let i = 0; i < 5 && p; i++) {
+   p = p.parentElement;
+   const inp = p && p.querySelector('input');
+   if (inp) {
+     const r = inp.getBoundingClientRect();
+     return {x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
+             v: inp.value};
+   }
+ }
+ return null;})()""" % _js_str(label))
+
+    def set_field(self, label, value):
+        f = self.field_by_label(label)
+        if not f:
+            log(f"WARN: field {label!r} not found")
+            return False
+        self.click_xy(f["x"], f["y"], 0.4)
+        self.select_all()
+        self.insert_text(value)
+        self.enter()
+        time.sleep(0.5)
+        return True
+
+    # -- upload ----------------------------------------------------------------
+    def upload_file(self, path):
+        """Click 上传图片 with the page's file chooser intercepted, then feed the file
+        straight to the chooser's input node — no native dialog ever opens."""
+        self.s.cmd("Page.setInterceptFileChooserDialog", enabled=True)
+        try:
+            if not self.click_text("上传图片"):
+                log("ERROR: 上传图片 button not found")
+                return False
+            ev = self.s.wait_event("Page.fileChooserOpened", timeout=10.0)
+            if ev:
+                node = ev.get("params", {}).get("backendNodeId")
+                self.s.cmd("DOM.setFileInputFiles", files=[path], backendNodeId=node)
+                log("file fed via fileChooser interception")
+                return True
+            log("no fileChooserOpened event; trying a hidden input[type=file]")
+            if self.js("document.querySelectorAll('input[type=file]').length"):
+                root = self.s.cmd("DOM.getDocument")["root"]["nodeId"]
+                q = self.s.cmd("DOM.querySelector", nodeId=root,
+                               selector="input[type=file]")
+                if q.get("nodeId"):
+                    self.s.cmd("DOM.setFileInputFiles", files=[path], nodeId=q["nodeId"])
+                    log("file fed via hidden input[type=file]")
+                    return True
+            log("ERROR: no file chooser and no input[type=file] — the app may use a "
+                "JS-bridge native picker; send the snaps + console")
+            return False
+        finally:
+            try:
+                self.s.cmd("Page.setInterceptFileChooserDialog", enabled=False)
+            except Exception:  # noqa: BLE001
+                pass
+
+    # -- screenshots -------------------------------------------------------------
+    def snap(self, tag):
+        import base64
+        path = os.path.join(LOGS_DIR, f"cal_{len(SNAPS):02d}_{tag}.png")
+        try:
+            data = self.s.cmd("Page.captureScreenshot", format="png").get("data", "")
+            with open(path, "wb") as fh:
+                fh.write(base64.b64decode(data))
+            SNAPS.append((tag, path))
+            log(f"snap -> {path}")
+        except Exception as e:  # noqa: BLE001
+            log(f"(snap {tag} failed: {e})")
+
+
+# ---- the CDP print flow -----------------------------------------------------------
+def _fail(ui, tag):
+    log(f"ERROR at step {tag!r} — visible texts: {ui.texts()}")
+    ui.snap("FAIL_" + tag)
+    return False
+
+
+def _cdp_steps(ui, image, dry_run, margin):
+    from PIL import Image as PILImage
+    ui.snap("home")
+
+    # 1. + 画板 -> 创建设计 modal (web modal, fully in the DOM)
+    if not ui.click_text("画板"):
+        return _fail(ui, "no_huaban_btn")
+    if not ui.wait_text("4*7", timeout=10, exact=False):
+        return _fail(ui, "create_modal")
+    ui.snap("create_modal")
+
+    # 2. the 用于4*7相纸 blank-canvas card; the editor may open as a NEW webview
+    card = ui.find_card("4*7")
+    if not card:
+        return _fail(ui, "no_4x7_card")
+    ui.click_xy(card["x"], card["y"], 2.0)
+    ui.repick_new(timeout=10.0)
+    if not ui.wait_text("制作", timeout=30):
+        return _fail(ui, "editor")
+    ui.snap("editor")
+
+    # 3. left toolbar 上传 -> panel with 上传图片
+    if not ui.click_text("上传"):
+        return _fail(ui, "no_upload_tool")
+    if not ui.wait_text("上传图片", timeout=10):
+        return _fail(ui, "upload_panel")
+    ui.snap("upload_panel")
+
+    # 4. feed the image (CDP interception — no native dialog), then 效果图 -> 应用
+    if not ui.upload_file(image):
+        return _fail(ui, "upload")
+    if not ui.wait_text("应用", timeout=30):
+        return _fail(ui, "effect_modal")
+    ui.snap("effect_modal")
+    if not ui.click_text("应用", settle=2.5):
+        return _fail(ui, "apply")
+    ui.snap("placed")
+
+    # 5. fit + center via the 高级 fields (aspect from the image file)
+    iw, ih = PILImage.open(image).size
+    aspect = iw / ih
+    aw, ah = CANVAS_W_IN - 2 * margin, CANVAS_H_IN - 2 * margin
+    W = min(aw, ah * aspect)
+    H = W / aspect
+    W, H = round(W, 2), round(H, 2)
+    X, Y = round((CANVAS_W_IN - W) / 2, 2), round((CANVAS_H_IN - H) / 2, 2)
+    f = ui.field_by_label("W")
+    if f:
+        log(f"fit: aspect={aspect:.3f} -> {W}x{H}in at ({X},{Y})  "
+            f"(W field currently {f.get('v')!r})")
+        for lab, val in (("W", W), ("H", H), ("X", X), ("Y", Y)):
+            ui.set_field(lab, val)
+        f2 = ui.field_by_label("W")
+        log(f"W reads back {(f2 or {}).get('v')!r}")
+    else:
+        log(f"WARN: no W field found — skipping fit; visible texts: {ui.texts()}")
+    ui.snap("after_fit")
+
+    # 6. 制作 -> 切割预览
+    if not ui.click_text("制作", settle=3.0):
+        return _fail(ui, "no_make_btn")
+    if not ui.wait_text("切割", timeout=25):
+        return _fail(ui, "cut_preview")
+    ui.snap("cut_preview")
+
+    if dry_run:
+        log("DRY RUN — reached 切割预览; NOT clicking 切割 (no print, no ribbon).")
+        ui.esc()
+        time.sleep(1.0)
+        if ui.find_text("切割"):
+            ui.js("""(()=>{const c=[...document.querySelectorAll(
+ '[class*=close],[class*=Close]')].find(e=>e.getBoundingClientRect().width>1);
+ if (c) { c.click(); return true; } return false;})()""")
+            time.sleep(1.0)
+        ui.snap("after_close")
+        return True
+
+    # REAL print — consumes ribbon. Only reachable from the print command.
+    if not ui.click_text("切割", settle=2.0):
+        return _fail(ui, "cut_click")
+    log("clicked 切割 — printing")
+    wait_done()
+    ui.snap("after_print")
+    return True
+
+
+def cdp_flow(image, dry_run=True, margin=0.0):
+    """The full print flow over CDP. dry_run stops at the 切割预览 (NO ribbon)."""
+    image = os.path.abspath(image)
+    if not os.path.exists(image):
+        sys.exit(f"ERROR: image not found: {image}")
+    clear_snaps()
+    ui = CdpUI()
+    if not ui.find_text("画板"):
+        log("not on the home page — restarting the app for a clean start")
+        restart_liene_with_cdp()
+        ui = CdpUI()
+        if not ui.wait_text("画板", timeout=20):
+            return _fail(ui, "home")
+    ok = _cdp_steps(ui, image, dry_run, margin)
+    log("=" * 60)
+    log(("DRY-RUN " if dry_run else "PRINT ") + ("COMPLETED" if ok else "FAILED"))
+    log(f"{len(SNAPS)} step screenshots:")
+    for tag, path in SNAPS:
+        log(f"  {path}")
+    log("-> send me ALL logs\\cal_*.png plus this console output.")
+    return ok
 
 
 # ---- Liene log discovery (job polling) ---------------------------------------
@@ -959,72 +1046,6 @@ def wait_done(timeout=300):
     return False
 
 
-# ---- flows -------------------------------------------------------------------
-def run_flow(image, dry_run=True, margin=0.0, fresh=None):
-    """The full print flow. dry_run=True stops at the 切割预览 (NO ribbon)."""
-    from PIL import Image as PILImage
-    image = os.path.abspath(image)
-    if not os.path.exists(image):
-        sys.exit(f"ERROR: image not found: {image}")
-    ui = make_ui()
-    clear_snaps()
-    snap(ui, "start")
-    ui.esc(); ui.esc()                      # dismiss stray modals from a prior run
-
-    home = on_home(ui)
-    if fresh is None:
-        fresh = bool(home)                  # auto: on home -> create a fresh canvas
-    if fresh:
-        if not home:
-            go_home(ui)
-        go_fresh(ui)
-    else:
-        clear_canvas(ui)
-
-    if not open_upload_panel(ui):
-        snap(ui, "FAIL_upload_panel")
-        log("ERROR: upload panel did not open — check upload_tool offset. "
-            "Send logs\\cal_*.png")
-        return finish(False, dry_run)
-    snap(ui, "upload_panel")
-
-    if not upload_image(ui, image):
-        return finish(False, dry_run)
-
-    iw, ih = PILImage.open(image).size
-    fit_ok = fit_and_center(ui, iw / ih, margin=margin)
-    snap(ui, "after_fit")
-
-    prev_ok = open_cut_preview(ui)
-    if not prev_ok:
-        return finish(False, dry_run)
-
-    if dry_run:
-        log("DRY RUN — reached 切割预览; NOT clicking 切割 (no print, no ribbon).")
-        close_cut_preview(ui)
-        go_home(ui)
-        snap(ui, "home_again")
-        return finish(True, dry_run, fit_ok=fit_ok)
-    do_print(ui)
-    wait_done()
-    time.sleep(1.0)
-    go_home(ui)
-    return finish(True, dry_run, fit_ok=fit_ok)
-
-
-def finish(ok, dry_run, fit_ok=True):
-    log("=" * 60)
-    log(("DRY-RUN " if dry_run else "PRINT ") + ("COMPLETED" if ok else "FAILED (see FAIL_* snap)"))
-    if ok and not fit_ok:
-        log("NOTE: fit/center was SKIPPED (field offsets uncalibrated) — the image stayed "
-            "at its default small size; that's expected on the first calibration run.")
-    log(f"{len(SNAPS)} step screenshots:")
-    for tag, path in SNAPS:
-        log(f"  {path}")
-    log("-> send me ALL logs\\cal_*.png plus this console output.")
-    return ok
-
-
 # ---- CLI ---------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Windows Liene-app UI automation (PixCut S1).")
@@ -1038,8 +1059,6 @@ def main():
     ap.add_argument("image", nargs="?", help="image file (dryrun/print)")
     ap.add_argument("--margin", type=float, default=0.0,
                     help="shrink the fitted image by this margin (inches) per side")
-    ap.add_argument("--fresh", action="store_true",
-                    help="force Home -> new blank 4x7 canvas first (auto-detected otherwise)")
     args = ap.parse_args()
     _require_win()
 
@@ -1055,8 +1074,7 @@ def main():
         if not args.image:
             sys.exit("usage: pixcut_win.py dryrun <image>  "
                      "(e.g. pixcut-probe\\samples\\sample_4x7.jpg)")
-        run_flow(args.image, dry_run=True, margin=args.margin,
-                 fresh=True if args.fresh else None)
+        cdp_flow(args.image, dry_run=True, margin=args.margin)
     elif args.command == "print":
         if not CALIBRATED:
             sys.exit("REFUSING to print: the Windows flow is not calibrated yet "
@@ -1064,8 +1082,7 @@ def main():
                      "cal_*.png screenshots; printing consumes ribbon.")
         if not args.image:
             sys.exit("usage: pixcut_win.py print <image>")
-        run_flow(args.image, dry_run=False, margin=args.margin,
-                 fresh=True if args.fresh else None)
+        cdp_flow(args.image, dry_run=False, margin=args.margin)
 
 
 if __name__ == "__main__":
