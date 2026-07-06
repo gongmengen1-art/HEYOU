@@ -741,9 +741,15 @@ def liene_procs():
     return out
 
 
+APP_LOG = os.path.join(LOGS_DIR, "liene_app.log")
+
+
 def restart_liene_with_cdp():
     """Kill the Liene app and relaunch it with WebView2 remote debugging enabled.
-    The WebView2 user-data dir is untouched, so the Creativerse sign-in persists."""
+    The WebView2 user-data dir is untouched, so the Creativerse sign-in persists.
+    The app streams its own log ([REQ]/[RESP] device traffic incl. job states) to stdout,
+    so capture it to logs\\liene_app.log — that's our job-completion signal on Windows
+    (there is no on-disk app log like on macOS) and it keeps the console from flooding."""
     import subprocess
     import psutil
     exe = LIENE_EXE_FALLBACK
@@ -763,9 +769,13 @@ def restart_liene_with_cdp():
     env = dict(os.environ)
     env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"--remote-debugging-port={CDP_PORT}"
     DETACHED = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    logfh = open(APP_LOG, "ab")   # the app keeps the inherited handle after we exit
     subprocess.Popen([exe], cwd=os.path.dirname(exe), env=env, creationflags=DETACHED,
-                     close_fds=True)
+                     stdout=logfh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+    logfh.close()
     log(f"relaunched {exe} with --remote-debugging-port={CDP_PORT}")
+    log(f"app log captured to {APP_LOG}")
 
 
 def cdp_pages(timeout=45.0):
@@ -903,11 +913,17 @@ def logscan():
 
 
 def wait_done(timeout=300):
-    files = [f for f in liene_log_files() if "liene_photo" in os.path.basename(f).lower()]
-    if not files:
-        log("WARN: no app log found; cannot poll completion")
-        return None
-    logf = files[0]
+    # Prefer the stdout capture from our own relaunch (the Windows app has no on-disk
+    # log like macOS; [REQ]/[RESP] device traffic only goes to stdout).
+    if os.path.exists(APP_LOG) and time.time() - os.path.getmtime(APP_LOG) < 6 * 3600:
+        logf = APP_LOG
+    else:
+        files = [f for f in liene_log_files()
+                 if "liene_photo" in os.path.basename(f).lower()]
+        if not files:
+            log("WARN: no app log found; cannot poll completion")
+            return None
+        logf = files[0]
     log(f"polling {logf}")
     start = time.time()
     last = ""
