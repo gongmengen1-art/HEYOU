@@ -19,6 +19,8 @@ CALIBRATION STATE (probe run 2026-07-06, screen 1600x900 @100%, window 1296x768@
 
 COMMANDS
   probe          report geometry + full screenshot (calibration step 1)
+  clicktest      diagnose click injection: tries pyautogui / SendInput / PostMessage on the
+                 home nav tabs and reports which one actually changes the page
   dryrun <img>   full flow UP TO the 切割预览 — never clicks 切割, uses NO ribbon.
                  Saves logs\cal_NN_<step>.png after every step. Send those back.
   logscan        search the disk for the Liene app's own log files (job polling)
@@ -193,6 +195,94 @@ def probe():
     print("[probe] DONE — send me logs\\pixcut_probe.png plus everything printed above.")
 
 
+# ---- low-level click injection ------------------------------------------------
+# The 2026-07-06 dryrun showed pyautogui clicks (SetCursorPos + mouse_event) never reach the
+# Liene app at all (6+ clicks, zero UI change, screenshots fine). SendInput with ABSOLUTE
+# coordinates embeds the position in the same injected event as the button press, so a cursor
+# snap-back (remote-control software, etc.) can't race it. PostMessage bypasses the cursor
+# entirely by posting WM_LBUTTONDOWN/UP straight to the window under the point.
+
+def _send_click(x, y):
+    """Click via SendInput: one atomic batch of (move+down, move+up) at ABSOLUTE coords.
+    Returns the number of events injected (2 == success)."""
+    import ctypes
+    user32 = ctypes.windll.user32
+    ULONG_PTR = ctypes.c_size_t
+
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long),
+                    ("mouseData", ctypes.c_ulong), ("dwFlags", ctypes.c_ulong),
+                    ("time", ctypes.c_ulong), ("dwExtraInfo", ULONG_PTR)]
+
+    class INPUT(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_ulong), ("mi", MOUSEINPUT)]
+
+    sw = user32.GetSystemMetrics(0)
+    sh = user32.GetSystemMetrics(1)
+    ax = int(round(x * 65535 / (sw - 1)))
+    ay = int(round(y * 65535 / (sh - 1)))
+    MOVE, ABS, LDOWN, LUP = 0x0001, 0x8000, 0x0002, 0x0004
+    events = (INPUT * 2)(
+        INPUT(0, MOUSEINPUT(ax, ay, 0, MOVE | ABS | LDOWN, 0, 0)),
+        INPUT(0, MOUSEINPUT(ax, ay, 0, MOVE | ABS | LUP, 0, 0)),
+    )
+    return user32.SendInput(2, events, ctypes.sizeof(INPUT))
+
+
+def _post_click(x, y):
+    """Click via PostMessage to the deepest window under the screen point (no cursor at all).
+    Returns (hwnd, class_name) of the target window."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    pt = wintypes.POINT(int(x), int(y))
+    hwnd = user32.WindowFromPoint(pt)
+    cls = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, cls, 256)
+    client = wintypes.POINT(int(x), int(y))
+    user32.ScreenToClient(hwnd, ctypes.byref(client))
+    lparam = ((client.y & 0xFFFF) << 16) | (client.x & 0xFFFF)
+    WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON = 0x0201, 0x0202, 0x0001
+    user32.PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
+    time.sleep(0.05)
+    user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lparam)
+    return hwnd, cls.value
+
+
+def _point_diag(x, y):
+    """Report which window actually sits under a screen point (overlay detector)."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    pt = wintypes.POINT(int(x), int(y))
+    hwnd = user32.WindowFromPoint(pt)
+    cls = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, cls, 256)
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    exe = "?"
+    try:
+        import psutil
+        exe = psutil.Process(pid.value).name()
+    except Exception:  # noqa: BLE001
+        pass
+    root = user32.GetAncestor(hwnd, 2)  # GA_ROOT
+    title = ctypes.create_unicode_buffer(256)
+    user32.GetWindowTextW(root, title, 256)
+    log(f"  under ({int(x)},{int(y)}): class={cls.value!r} pid={pid.value} exe={exe} "
+        f"root_title={title.value!r}")
+    return exe
+
+
+def _foreground_title():
+    import ctypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetWindowTextW(hwnd, buf, 256)
+    return buf.value
+
+
 # ---- input / vision primitives ----------------------------------------------
 class UI:
     """Windows automation primitives, mirroring print_via_app.py's UI class. Coordinates are
@@ -221,7 +311,11 @@ class UI:
 
     def click_pt(self, x, y, settle=0.6):
         self.activate()
-        self._pg.click(int(x), int(y))
+        n = _send_click(int(x), int(y))
+        if n != 2:
+            log(f"WARN: SendInput injected {n}/2 events at ({int(x)},{int(y)}); "
+                "falling back to pyautogui")
+            self._pg.click(int(x), int(y))
         time.sleep(settle)
 
     def click(self, name, settle=0.8):
@@ -547,6 +641,81 @@ def do_print(ui):
     log("clicked 切割 — printing")
 
 
+# ---- click-injection diagnosis ------------------------------------------------
+def _content_diff(a, b, ui):
+    """Fraction of sampled pixels that changed in the web-content region (rel 170,130-1130,700).
+    Used to tell whether a click actually navigated the page."""
+    ax0, ay0 = ui.pt2px(ui.ox + 170, ui.oy + 130)
+    ax1, ay1 = ui.pt2px(ui.ox + 1130, ui.oy + 700)
+    pa, pb = a.load(), b.load()
+    total = changed = 0
+    for y in range(int(ay0), min(a.height, b.height, int(ay1)), 4):
+        for x in range(int(ax0), min(a.width, b.width, int(ax1)), 4):
+            total += 1
+            ra, ga, ba = pa[x, y]
+            rb, gb, bb = pb[x, y]
+            if abs(ra - rb) + abs(ga - gb) + abs(ba - bb) > 60:
+                changed += 1
+    return changed / total if total else 0.0
+
+
+def clicktest():
+    """Diagnose why clicks don't reach the app: try 3 injection methods on the home nav tabs
+    (模板/元素/探索 — clicking one visibly changes the page) and report which method works.
+    Run this ON THE HOME PAGE. Harmless: only nav tabs are clicked."""
+    ui = make_ui()
+    clear_snaps()
+
+    log(f"foreground before activate: {_foreground_title()!r}")
+    ui.activate()
+    log(f"foreground after  activate: {_foreground_title()!r}")
+
+    try:
+        import ctypes
+        log(f"python elevated (admin): {bool(ctypes.windll.shell32.IsUserAnAdmin())}")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # cursor snap-back check: move the mouse and see where it actually ends up
+    tx, ty = ui.ox + 363, ui.oy + 55           # 模板 tab
+    ui._pg.moveTo(tx, ty)
+    time.sleep(0.3)
+    px, py = ui._pg.position()
+    log(f"moveTo({tx},{ty}) -> cursor now at ({px},{py})"
+        + ("  [OK]" if abs(px - tx) <= 2 and abs(py - ty) <= 2 else "  [SNAPPED BACK!]"))
+
+    # what actually sits under our click targets? (transparent overlay detector)
+    log("window under the click targets:")
+    _point_diag(ui.ox + 1101, ui.oy + 55)      # + 画板 button
+    _point_diag(tx, ty)                        # 模板 tab
+
+    targets = [("moban", 363, 55), ("yuansu", 411, 55), ("tansuo", 316, 55)]
+    methods = [
+        ("pyautogui", lambda x, y: ui._pg.click(int(x), int(y))),
+        ("sendinput", lambda x, y: log(f"    SendInput injected "
+                                       f"{_send_click(int(x), int(y))}/2 events")),
+        ("postmessage", lambda x, y: log(f"    PostMessage -> hwnd class "
+                                         f"{_post_click(int(x), int(y))[1]!r}")),
+    ]
+    results = {}
+    for (mname, fn), (tname, dx, dy) in zip(methods, targets):
+        ui.activate()
+        before = ui.shot()
+        log(f"[{mname}] clicking {tname} tab at rel ({dx},{dy})...")
+        fn(ui.ox + dx, ui.oy + dy)
+        time.sleep(2.5)
+        after = ui.shot(os.path.join(LOGS_DIR, f"cal_click_{mname}.png"))
+        frac = _content_diff(before, after, ui)
+        results[mname] = frac
+        log(f"[{mname}] content change: {frac:.1%} -> "
+            + ("PAGE CHANGED (works!)" if frac > 0.02 else "no change (blocked)"))
+
+    log("=" * 60)
+    for m, frac in results.items():
+        log(f"  {m:12s} {'WORKS' if frac > 0.02 else 'blocked':8s} ({frac:.1%})")
+    log("-> send me this console output + logs\\cal_click_*.png")
+
+
 # ---- Liene log discovery (job polling) ---------------------------------------
 def liene_log_files():
     """Find the Windows Liene app's own liene_photo_pc_*.log files (location unknown a
@@ -569,8 +738,9 @@ def liene_log_files():
                     hits.append(os.path.join(root, f))
             dirs[:] = []   # matched dir: don't descend further from the walk side
             hits.extend(glob.glob(os.path.join(root, "**", "*.log"), recursive=True))
-    hits = sorted(set(hits), key=lambda f: os.path.getmtime(f), reverse=True)
-    return hits
+    noise = ("webview2", "ebwebview", "leveldb")   # WebView2 browser-profile DB logs, not app logs
+    hits = [f for f in set(hits) if not any(n in f.lower() for n in noise)]
+    return sorted(hits, key=lambda f: os.path.getmtime(f), reverse=True)
 
 
 def logscan():
@@ -687,9 +857,10 @@ def finish(ok, dry_run, fit_ok=True):
 # ---- CLI ---------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Windows Liene-app UI automation (PixCut S1).")
-    ap.add_argument("command", choices=["probe", "dryrun", "print", "logscan"],
-                    help="probe = geometry report; dryrun = full flow WITHOUT printing "
-                         "(saves step screenshots); logscan = find the app's log files; "
+    ap.add_argument("command", choices=["probe", "clicktest", "dryrun", "print", "logscan"],
+                    help="probe = geometry report; clicktest = diagnose click injection; "
+                         "dryrun = full flow WITHOUT printing (saves step screenshots); "
+                         "logscan = find the app's log files; "
                          "print = real print (disabled until calibrated)")
     ap.add_argument("image", nargs="?", help="image file (dryrun/print)")
     ap.add_argument("--margin", type=float, default=0.0,
@@ -701,6 +872,8 @@ def main():
 
     if args.command == "probe":
         probe()
+    elif args.command == "clicktest":
+        clicktest()
     elif args.command == "logscan":
         logscan()
     elif args.command == "dryrun":
