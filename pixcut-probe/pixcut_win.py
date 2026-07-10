@@ -1003,6 +1003,25 @@ def set_num_field(pg, gw, ox, oy, rel, value):
     return fg_ok
 
 
+def wait_for_teal(pg, ox, oy, rel_region, timeout=30.0, interval=1.0, settle=0.7):
+    """Poll for a teal button in a window-relative region until it appears (or timeout).
+    This is the ROBUST readiness signal for a modal that shows after a loading skeleton:
+    the fixed 15s wait was flaky (loading sometimes ran longer), but the teal 切割 button
+    only exists once the 切割预览 modal has finished loading. Returns its abs-px centroid,
+    or None on timeout. `settle` lets the modal finish painting before we act on it."""
+    x0, y0, x1, y1 = rel_region
+    t0 = time.time()
+    hit = None
+    while time.time() - t0 < timeout:
+        img = pg.screenshot().convert("RGB")
+        hit = find_teal_px(img, ox + x0, oy + y0, ox + x1, oy + y1)
+        if hit:
+            time.sleep(settle)
+            return hit
+        time.sleep(interval)
+    return hit
+
+
 def wait_file_dialog(gw, appear=True, timeout=10.0):
     """Wait for the native open dialog (title 打开/Open) to appear/disappear."""
     t0 = time.time()
@@ -1166,15 +1185,14 @@ def hybrid_flow(image, dry_run=True):
     os_snap(pg, "after_fit")   # verify the four fields took the values (read them next round)
 
     # 7. 制作 -> 切割预览 modal (title 切割预览; teal 切割 button bottom-right = PRINTS).
-    #    Hard 15s wait for the modal to finish loading, then snap + verify by teal detection.
+    #    POLL for the teal 切割 button instead of a fixed sleep — the loading time varies
+    #    (a fixed 15s was flaky, ~2/4), but the button only exists once the modal is ready.
     _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
-    time.sleep(15.0)
+    cut = wait_for_teal(pg, ox, oy, ED_CUT_REGION, timeout=40.0)
     img = os_snap(pg, "cut_preview")
-    cut = find_teal_px(img, ox + ED_CUT_REGION[0], oy + ED_CUT_REGION[1],
-                       ox + ED_CUT_REGION[2], oy + ED_CUT_REGION[3])
     if not cut:
-        log("WARN: teal 切割 not found in the preview region — the modal may still be "
-            "loading or the offset needs a nudge (see cal_cut_preview)")
+        log("WARN: 切割预览 did not appear within 40s (teal 切割 not detected); see "
+            "cal_cut_preview")
 
     if dry_run:
         # DO NOT click 切割 (that PRINTS + eats ribbon). Close the preview via its ✕.
