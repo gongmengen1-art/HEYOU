@@ -865,8 +865,12 @@ ED = {
     "ed_upload_tool":    (41, 262),   # editor left toolbar: 上传 (VERIFIED 2026-07-06)
     "ed_upload_img_btn": (242, 105),  # upload panel: teal 上传图片 -> native file dialog
     "ed_lib_thumb1":     (163, 387),  # upload panel: first 原图 library thumbnail
+    "ed_apply_btn":      (648, 656),  # 效果图 modal: teal 应用 (place original) — VERIFIED loc
+    "ed_aicutout_btn":   (648, 570),  # 效果图 modal: AI抠图 (die-cut; metered "Free now")
+    "ed_effect_close":   (820, 104),  # 效果图 modal: close ✕
     "ed_make_btn":       (1243, 52),  # editor top-right: teal 制作 (VERIFIED, pale teal)
 }
+ED_APPLY_REGION = (560, 630, 900, 685)    # rel region of the teal 应用 (效果图 modal bottom)
 ED_MAKE_REGION = (1150, 30, 1290, 75)     # rel region of the teal 制作 button
 ED_UPLOAD_REGION = (100, 84, 410, 126)    # rel region of the teal 上传图片 button
                                           # (btn is rel ~(101,89)-(385,122), center (243,105))
@@ -1038,22 +1042,37 @@ def hybrid_flow(image, dry_run=True):
         log("ERROR: the open dialog did not close (path paste may have failed)")
         return done(False)
     time.sleep(3.5)                        # upload/processing
-    img = os_snap(pg, "after_upload")
 
-    # 6. place onto the canvas: on macOS, clicking a 原图 thumbnail places it; the newest
-    #    upload should be the FIRST thumbnail. Only click if the canvas is still empty.
+    # 6. the upload AUTO-OPENS a 效果图 modal (image preview + 应用 / AI抠图). Click the
+    #    teal 应用 to place the ORIGINAL onto the canvas (AI抠图 = die-cut, metered; skipped
+    #    during calibration). The modal covers the canvas, so poll for its teal 应用 button.
+    apply = None
+    for _ in range(8):
+        time.sleep(1.2)
+        img = pg.screenshot().convert("RGB")
+        apply = find_teal_px(img, ox + ED_APPLY_REGION[0], oy + ED_APPLY_REGION[1],
+                             ox + ED_APPLY_REGION[2], oy + ED_APPLY_REGION[3])
+        if apply:
+            break
+    os_snap(pg, "effect_modal")
+    if apply:
+        _send_click(int(apply[0]), int(apply[1]))   # centroid is absolute px (scale 1.0)
+    else:
+        log("WARN: teal 应用 not found in the 效果图 modal region; using offset fallback")
+        _send_click(ox + ED["ed_apply_btn"][0], oy + ED["ed_apply_btn"][1])
+    time.sleep(2.5)
+    img = os_snap(pg, "placed")
     if not canvas_has_object(img, ox, oy):
-        _send_click(ox + ED["ed_lib_thumb1"][0], oy + ED["ed_lib_thumb1"][1])
-        time.sleep(2.0)
-        img = os_snap(pg, "placed")
-    log(f"canvas object detected: {canvas_has_object(img, ox, oy)}")
+        log("WARN: canvas looks empty after 应用 — placement may have missed")
+    else:
+        log("image placed on the canvas")
 
     # 7. 制作 -> 切割预览. SNAP ONLY — nothing inside the preview is clicked (the 切割
     #    button offset gets measured from this snap; sizing comes next round too).
     _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
     time.sleep(4.0)
     os_snap(pg, "cut_preview")
-    log("CHECKPOINT 2 reached — image uploaded + placed (default size), 制作 clicked, "
+    log("CHECKPOINT 3 reached — image uploaded, 效果图->应用 placed it, 制作 clicked, "
         "preview snapped, NOTHING in the preview was clicked (no ribbon).")
     return done(True)
 
