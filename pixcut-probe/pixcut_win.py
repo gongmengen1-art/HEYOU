@@ -868,9 +868,15 @@ ED = {
     "ed_apply_btn":      (648, 656),  # 效果图 modal: teal 应用 (place original) — VERIFIED loc
     "ed_aicutout_btn":   (648, 570),  # 效果图 modal: AI抠图 (die-cut; metered "Free now")
     "ed_effect_close":   (820, 104),  # 效果图 modal: close ✕
+    "fld_w":             (1099, 516), # 高级(mm) W field (VERIFIED cal_06_placed)
+    "fld_h":             (1193, 516), # 高级(mm) H field
+    "fld_x":             (1099, 556), # 高级(mm) X field
+    "fld_y":             (1193, 556), # 高级(mm) Y field
     "ed_make_btn":       (1243, 52),  # editor top-right: teal 制作 (VERIFIED, pale teal)
 }
 ED_APPLY_REGION = (560, 630, 900, 685)    # rel region of the teal 应用 (效果图 modal bottom)
+# The 高级 panel is in MILLIMETRES on Windows (mac used inches). 4x7in canvas = 101.6 x 177.8 mm.
+CANVAS_W_MM, CANVAS_H_MM = 101.6, 177.8
 ED_MAKE_REGION = (1150, 30, 1290, 75)     # rel region of the teal 制作 button
 ED_UPLOAD_REGION = (100, 84, 410, 126)    # rel region of the teal 上传图片 button
                                           # (btn is rel ~(101,89)-(385,122), center (243,105))
@@ -922,6 +928,49 @@ def os_snap(pg, tag):
     SNAPS.append((tag, path))
     log(f"snap -> {path}")
     return img.convert("RGB")
+
+
+def set_num_field(pg, clip, ox, oy, rel, value):
+    """Focus a Flutter numeric field (SendInput click), select-all, paste the value, Enter.
+    Clipboard paste (not typewrite) keeps the decimal point away from any IME."""
+    _send_click(ox + rel[0], oy + rel[1])
+    time.sleep(0.35)
+    pg.hotkey("ctrl", "a")
+    time.sleep(0.15)
+    clip.copy(str(value))
+    time.sleep(0.15)
+    pg.hotkey("ctrl", "v")
+    time.sleep(0.15)
+    pg.press("enter")
+    time.sleep(0.45)
+
+
+def _region_diff(a, b, region):
+    """Fraction of sampled pixels that changed between two screenshots in an abs-px region."""
+    x0, y0, x1, y1 = region
+    pa, pb = a.load(), b.load()
+    tot = chg = 0
+    for y in range(max(0, y0), min(a.height, b.height, y1), 4):
+        for x in range(max(0, x0), min(a.width, b.width, x1), 4):
+            tot += 1
+            r1, g1, b1 = pa[x, y]
+            r2, g2, b2 = pb[x, y]
+            if abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2) > 60:
+                chg += 1
+    return chg / tot if tot else 0.0
+
+
+def wait_stable(pg, region, gap=1.5, tries=10, thresh=0.015):
+    """Screenshot until two consecutive frames barely differ in `region` (a loading spinner
+    keeps changing; a settled page doesn't). Returns the last RGB frame."""
+    prev = pg.screenshot().convert("RGB")
+    for _ in range(tries):
+        time.sleep(gap)
+        cur = pg.screenshot().convert("RGB")
+        if _region_diff(prev, cur, region) < thresh:
+            return cur
+        prev = cur
+    return prev
 
 
 def wait_file_dialog(gw, appear=True, timeout=10.0):
@@ -1067,13 +1116,33 @@ def hybrid_flow(image, dry_run=True):
     else:
         log("image placed on the canvas")
 
-    # 7. 制作 -> 切割预览. SNAP ONLY — nothing inside the preview is clicked (the 切割
-    #    button offset gets measured from this snap; sizing comes next round too).
+    # 6.5 fit + center via the 高级(mm) fields, same math as macOS fit_and_center but in mm
+    #     (Windows panel is mm). Object is selected after 应用, so the fields are live.
+    from PIL import Image as PILImage
+    iw, ih = PILImage.open(image).size
+    aspect = iw / ih
+    W = min(CANVAS_W_MM, CANVAS_H_MM * aspect)
+    H = W / aspect
+    X = (CANVAS_W_MM - W) / 2
+    Y = (CANVAS_H_MM - H) / 2
+    W, H, X, Y = round(W, 1), round(H, 1), round(X, 1), round(Y, 1)
+    log(f"fit(mm): aspect={aspect:.3f} -> W={W} H={H} X={X} Y={Y}")
+    set_num_field(pg, clip, ox, oy, ED["fld_w"], W)
+    set_num_field(pg, clip, ox, oy, ED["fld_h"], H)
+    set_num_field(pg, clip, ox, oy, ED["fld_x"], X)
+    set_num_field(pg, clip, ox, oy, ED["fld_y"], Y)
+    os_snap(pg, "after_fit")   # verify the four fields took the values (read them next round)
+
+    # 7. 制作 -> 切割预览. The preview shows a LOADING spinner for several seconds while it
+    #    generates the cut path, so wait for the frame to settle before snapping. SNAP ONLY —
+    #    nothing inside the preview is clicked (the 切割 offset gets measured from this snap).
     _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
-    time.sleep(4.0)
+    time.sleep(3.0)
+    preview_region = (ox + 560, oy + 120, ox + 1050, oy + 700)
+    wait_stable(pg, preview_region, gap=1.5, tries=10)   # ride out the loading spinner
     os_snap(pg, "cut_preview")
-    log("CHECKPOINT 3 reached — image uploaded, 效果图->应用 placed it, 制作 clicked, "
-        "preview snapped, NOTHING in the preview was clicked (no ribbon).")
+    log("CHECKPOINT 3 reached — uploaded, placed via 应用, fitted to 4x7 (mm), 制作 clicked, "
+        "preview settled + snapped, NOTHING in the preview was clicked (no ribbon).")
     return done(True)
 
 
