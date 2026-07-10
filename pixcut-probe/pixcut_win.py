@@ -63,7 +63,9 @@ CANVAS_W_IN, CANVAS_H_IN = 4.0, 7.0
 
 # Flip to True only after a Windows dryrun has been verified end-to-end.
 # The `print` command refuses to run while False (ribbon safety).
-CALIBRATED = False
+# 2026-07-10: dryrun verified stable end-to-end (reaches 切割预览, teal 切割 @rel(846,598),
+# clean close); user gave explicit consent for a real print test -> enabled.
+CALIBRATED = True
 
 # Expected window size (from probe 2026-07-06). Offsets are only valid near this.
 EXPECT_W, EXPECT_H = 1296, 768
@@ -1205,12 +1207,14 @@ def hybrid_flow(image, dry_run=True):
         return done(True)
 
     # REAL PRINT — clicks 切割, consumes ribbon. Only reachable via the `print` command
-    # (gated by CALIBRATED). Prefer the detected teal centroid, else the measured offset.
-    if cut:
-        _send_click(int(cut[0]), int(cut[1]))
-    else:
-        _send_click(ox + ED["ed_cut_btn"][0], oy + ED["ed_cut_btn"][1])
-    log("clicked 切割 — printing")
+    # (gated by CALIBRATED). Require the DETECTED teal centroid — never blind-click the
+    # offset for a real print (if the preview didn't render, abort rather than misclick).
+    if not cut:
+        log("ERROR: 切割预览 not confirmed (teal 切割 not detected) — NOT printing, to avoid "
+            "a blind click. Re-run.")
+        return done(False)
+    _send_click(int(cut[0]), int(cut[1]))
+    log("clicked 切割 — printing (real print, consuming ribbon)")
     wait_done()
     time.sleep(1.0)
     os_snap(pg, "after_print")
