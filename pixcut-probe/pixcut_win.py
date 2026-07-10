@@ -883,6 +883,43 @@ ED_UPLOAD_REGION = (100, 84, 410, 126)    # rel region of the teal 上传图片 
 ED_CANVAS = (603, 172, 872, 679)          # rel rect of the white 4x7 canvas
 
 
+def make_loading(img, ox, oy):
+    """True while the app shows its colored-shapes LOADING skeleton over the canvas (teal
+    square + blue triangle + magenta circle + yellow hexagon). This skeleton is STATIC, so
+    frame-diff stabilization can't detect it — but its magenta+yellow are colors that never
+    appear in the normal editor, so presence of both = still loading. Shown both while a
+    resize re-renders and while 制作 generates the composite/cut path."""
+    px = img.load()
+    mag = yel = 0
+    for y in range(oy + 300, min(img.height, oy + 570), 3):
+        for x in range(ox + 560, min(img.width, ox + 960), 3):
+            r, g, b = px[x, y]
+            if r > 190 and g < 120 and 90 < b < 210:      # magenta circle
+                mag += 1
+            elif r > 210 and g > 165 and b < 115:         # yellow hexagon
+                yel += 1
+    return mag > 15 and yel > 15
+
+
+def wait_loading_clear(pg, ox, oy, label="", max_s=45.0, need_clear=2):
+    """Poll until the make_loading skeleton has been ABSENT for `need_clear` consecutive
+    frames (so a not-yet-started load isn't mistaken for done). Returns the last frame."""
+    clear = 0
+    img = None
+    t0 = time.time()
+    while time.time() - t0 < max_s:
+        img = pg.screenshot().convert("RGB")
+        if make_loading(img, ox, oy):
+            clear = 0
+        else:
+            clear += 1
+            if clear >= need_clear:
+                return img
+        time.sleep(1.3)
+    log(f"WARN: loading did not clear within {max_s:.0f}s{(' ('+label+')') if label else ''}")
+    return img
+
+
 def canvas_has_object(img, ox, oy, min_px=150):
     """True if the canvas rect contains enough non-white pixels (a placed object)."""
     px = img.load()
@@ -943,34 +980,6 @@ def set_num_field(pg, clip, ox, oy, rel, value):
     time.sleep(0.15)
     pg.press("enter")
     time.sleep(0.45)
-
-
-def _region_diff(a, b, region):
-    """Fraction of sampled pixels that changed between two screenshots in an abs-px region."""
-    x0, y0, x1, y1 = region
-    pa, pb = a.load(), b.load()
-    tot = chg = 0
-    for y in range(max(0, y0), min(a.height, b.height, y1), 4):
-        for x in range(max(0, x0), min(a.width, b.width, x1), 4):
-            tot += 1
-            r1, g1, b1 = pa[x, y]
-            r2, g2, b2 = pb[x, y]
-            if abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2) > 60:
-                chg += 1
-    return chg / tot if tot else 0.0
-
-
-def wait_stable(pg, region, gap=1.5, tries=10, thresh=0.015):
-    """Screenshot until two consecutive frames barely differ in `region` (a loading spinner
-    keeps changing; a settled page doesn't). Returns the last RGB frame."""
-    prev = pg.screenshot().convert("RGB")
-    for _ in range(tries):
-        time.sleep(gap)
-        cur = pg.screenshot().convert("RGB")
-        if _region_diff(prev, cur, region) < thresh:
-            return cur
-        prev = cur
-    return prev
 
 
 def wait_file_dialog(gw, appear=True, timeout=10.0):
@@ -1131,18 +1140,20 @@ def hybrid_flow(image, dry_run=True):
     set_num_field(pg, clip, ox, oy, ED["fld_h"], H)
     set_num_field(pg, clip, ox, oy, ED["fld_x"], X)
     set_num_field(pg, clip, ox, oy, ED["fld_y"], Y)
+    wait_loading_clear(pg, ox, oy, label="resize")   # the resize re-renders the large image
     os_snap(pg, "after_fit")   # verify the four fields took the values (read them next round)
 
-    # 7. 制作 -> 切割预览. The preview shows a LOADING spinner for several seconds while it
-    #    generates the cut path, so wait for the frame to settle before snapping. SNAP ONLY —
-    #    nothing inside the preview is clicked (the 切割 offset gets measured from this snap).
+    # 7. 制作 -> 切割预览. Clicking 制作 shows the (STATIC) colored-shapes loading skeleton
+    #    for several seconds while it generates the composite + cut path — wait for that to
+    #    CLEAR (not a frame-diff, which can't see a static skeleton) before snapping.
+    #    SNAP ONLY — nothing inside the preview is clicked (切割 offset measured from it).
     _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
-    time.sleep(3.0)
-    preview_region = (ox + 560, oy + 120, ox + 1050, oy + 700)
-    wait_stable(pg, preview_region, gap=1.5, tries=10)   # ride out the loading spinner
+    time.sleep(2.5)
+    wait_loading_clear(pg, ox, oy, label="制作", max_s=60.0)
+    time.sleep(1.5)                                  # settle after the skeleton clears
     os_snap(pg, "cut_preview")
     log("CHECKPOINT 3 reached — uploaded, placed via 应用, fitted to 4x7 (mm), 制作 clicked, "
-        "preview settled + snapped, NOTHING in the preview was clicked (no ribbon).")
+        "loading cleared + preview snapped, NOTHING in the preview clicked (no ribbon).")
     return done(True)
 
 
