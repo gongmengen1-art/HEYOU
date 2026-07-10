@@ -868,7 +868,8 @@ ED = {
     "ed_make_btn":       (1243, 52),  # editor top-right: teal 制作 (VERIFIED, pale teal)
 }
 ED_MAKE_REGION = (1150, 30, 1290, 75)     # rel region of the teal 制作 button
-ED_UPLOAD_REGION = (235, 130, 555, 175)   # rel region of the teal 上传图片 button
+ED_UPLOAD_REGION = (100, 84, 410, 126)    # rel region of the teal 上传图片 button
+                                          # (btn is rel ~(101,89)-(385,122), center (243,105))
 ED_CANVAS = (603, 172, 872, 679)          # rel rect of the white 4x7 canvas
 
 
@@ -1000,12 +1001,19 @@ def hybrid_flow(image, dry_run=True):
         return done(False)
     log("editor open (制作 button detected)")
 
-    # 4. 上传 tool -> in-app upload panel (teal 上传图片 button at its top verifies it)
+    # 4. 上传 tool -> in-app upload panel (teal 上传图片 button at its top verifies it).
+    #    Poll: the panel slides in and its images can take a moment to paint.
     _send_click(ox + ED["ed_upload_tool"][0], oy + ED["ed_upload_tool"][1])
-    time.sleep(1.8)
-    img = os_snap(pg, "upload_panel")
-    if not find_teal_px(img, ox + ED_UPLOAD_REGION[0], oy + ED_UPLOAD_REGION[1],
-                        ox + ED_UPLOAD_REGION[2], oy + ED_UPLOAD_REGION[3]):
+    panel = None
+    for _ in range(5):
+        time.sleep(1.2)
+        img = pg.screenshot().convert("RGB")
+        panel = find_teal_px(img, ox + ED_UPLOAD_REGION[0], oy + ED_UPLOAD_REGION[1],
+                             ox + ED_UPLOAD_REGION[2], oy + ED_UPLOAD_REGION[3])
+        if panel:
+            break
+    os_snap(pg, "upload_panel")
+    if not panel:
         log("ERROR: upload panel did not open (teal 上传图片 not found)")
         return done(False)
 
