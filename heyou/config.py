@@ -62,20 +62,22 @@ class ServerCfg(BaseModel):
 
 
 class PixcutCfg(BaseModel):
-    script: str = "pixcut-probe/print_via_app.sh"  # relative to project root (or absolute)
+    script: str = "pixcut-probe/print_via_app.sh"  # macOS driver (relative to root or absolute);
+                                # Windows ignores this and uses pixcut-probe/pixcut_win.py
     dry_run: bool = False       # DEBUG: run the whole flow but never click 切割 (no print/ribbon), log success
-    cutout: bool = False        # apply AI抠图 die-cut each print (consumes a trial credit)
-    fresh: bool = True          # navigate Home->blank 4x7 canvas each print (more robust)
+    cutout: bool = False        # apply AI抠图 die-cut each print (consumes a trial credit) — macOS only
+    fresh: bool = True          # macOS: navigate Home->blank 4x7 canvas each print (Windows always restarts)
     margin_in: float = 0.0      # shrink the fitted image by this margin per side
-    timeout_sec: float = 300.0  # a real print incl. job polling can take 1-2 min
-    restart_every: int = 10     # restart Liene app every N prints to clear accumulated 画板 tabs (0 = never)
+    timeout_sec: float = 300.0  # a real print incl. job polling can take 1-3 min
+    restart_every: int = 10     # macOS: restart Liene app every N prints to clear 画板 tabs (0 = never).
+                                # Windows self-restarts each print, so this is unused there.
 
 
 class PrintingCfg(BaseModel):
     enabled: bool = False
     printer_name: str = ""
     backend: str = "system"     # "system" = OS printer (CUPS on mac/Linux, win32print on Windows) |
-                                # "pixcut" = macOS-only Liene-app UI automation. "lp"/"win" alias "system".
+                                # "pixcut" = Liene-app UI automation (macOS + Windows). "lp"/"win" alias "system".
     pixcut: PixcutCfg = Field(default_factory=PixcutCfg)
 
 

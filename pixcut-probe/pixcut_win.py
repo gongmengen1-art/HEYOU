@@ -928,6 +928,7 @@ ED = {
     "ed_make_btn":       (1243, 52),  # editor top-right: teal 制作 (VERIFIED, pale teal)
     "ed_cut_btn":        (846, 599),  # 切割预览 modal: teal 切割 = PRINTS (VERIFIED 捕获.PNG)
     "ed_cut_close":      (863, 156),  # 切割预览 modal: close ✕
+    "ed_home_btn":       (135, 16),   # top bar 首页 tab -> back to Creativerse home
 }
 ED_APPLY_REGION = (560, 630, 900, 685)    # rel region of the teal 应用 (效果图 modal bottom)
 ED_CUT_REGION = (770, 572, 910, 628)      # rel region of the teal 切割 (切割预览 bottom-right)
@@ -1036,7 +1037,7 @@ def wait_file_dialog(gw, appear=True, timeout=10.0):
     return False
 
 
-def hybrid_flow(image, dry_run=True):
+def hybrid_flow(image, dry_run=True, margin_in=0.0):
     """Home (CDP) -> 创建设计 modal -> 4x7 editor -> upload panel -> feed file -> place
     thumbnail -> 制作 -> 切割预览 (SendInput for all Flutter UI). CURRENT CHECKPOINT 2:
     stops at the preview WITHOUT clicking anything inside it — its 切割 offset, the
@@ -1172,7 +1173,10 @@ def hybrid_flow(image, dry_run=True):
     from PIL import Image as PILImage
     iw, ih = PILImage.open(image).size
     aspect = iw / ih
-    W = min(CANVAS_W_MM, CANVAS_H_MM * aspect)
+    margin_mm = margin_in * 25.4
+    aw = CANVAS_W_MM - 2 * margin_mm
+    ah = CANVAS_H_MM - 2 * margin_mm
+    W = min(aw, ah * aspect)
     H = W / aspect
     X = (CANVAS_W_MM - W) / 2
     Y = (CANVAS_H_MM - H) / 2
@@ -1218,7 +1222,26 @@ def hybrid_flow(image, dry_run=True):
     wait_done()
     time.sleep(1.0)
     os_snap(pg, "after_print")
+    # Post-print CLEANUP: return to the Creativerse home tab so the screen is clean and ready
+    # for the next print (mirrors macOS route-B go_home). Best-effort; the next run also
+    # restarts the app for a guaranteed-clean start, so this is cosmetic + belt-and-suspenders.
+    go_home_win(pg, gw, ox, oy)
+    os_snap(pg, "home_after_print")
     return done(True)
+
+
+def go_home_win(pg, gw, ox, oy):
+    """Click the 首页 tab (Flutter, SendInput) to return to the Creativerse home. Clicks twice,
+    macOS-style — a first click may only dismiss an overlay (print-queue panel), the second
+    navigates. Best-effort cleanup; never raises."""
+    try:
+        _force_foreground(gw)
+        for _ in range(2):
+            _send_click(ox + ED["ed_home_btn"][0], oy + ED["ed_home_btn"][1])
+            time.sleep(1.0)
+        log("returned to home (cleanup for next print)")
+    except Exception as e:  # noqa: BLE001
+        log(f"(go_home_win best-effort failed: {e})")
 
 
 # ---- create-canvas diagnostics --------------------------------------------------
@@ -1497,7 +1520,7 @@ def main():
         if not args.image:
             sys.exit("usage: pixcut_win.py dryrun <image>  "
                      "(e.g. pixcut-probe\\samples\\sample_4x7.jpg)")
-        hybrid_flow(args.image, dry_run=True)
+        hybrid_flow(args.image, dry_run=True, margin_in=args.margin)
     elif args.command == "print":
         if not CALIBRATED:
             sys.exit("REFUSING to print: the Windows flow is not calibrated yet "
@@ -1505,7 +1528,7 @@ def main():
                      "cal_*.png screenshots; printing consumes ribbon.")
         if not args.image:
             sys.exit("usage: pixcut_win.py print <image>")
-        hybrid_flow(args.image, dry_run=False)
+        hybrid_flow(args.image, dry_run=False, margin_in=args.margin)
 
 
 if __name__ == "__main__":

@@ -2,10 +2,12 @@
 
 Two backends, chosen by `printing_cfg.backend`:
   * "system" (a.k.a. "lp" / "win") — the OS's normal printer: CUPS `lp`/`lpstat` on
-    macOS/Linux, win32print + GDI on Windows. Works everywhere; this is what Windows uses
-    (install the PixCut as a system printer, then set `backend: system`).
-  * "pixcut" — macOS-only: UI-automate the official Liene Photo app via
-    `pixcut-probe/print_via_app.sh`. Selecting it on a non-mac returns a clear error.
+    macOS/Linux, win32print + GDI on Windows. Works everywhere (install the PixCut as a
+    system printer, then set `backend: system`).
+  * "pixcut" — UI-automate the official Liene Photo app to get real die-cut printing. This
+    is CROSS-PLATFORM now: macOS drives it via `pixcut-probe/print_via_app.sh` (osascript +
+    CGEvent), Windows via `pixcut-probe/pixcut_win.py` (WebView2 CDP for the web home +
+    SendInput for the Flutter editor). Linux has no pixcut path — use `backend: system`.
 
 `print_output(path, printing_cfg)` / `backend_status(printing_cfg)` are the entry points the
 app uses. Windows-only imports (pywin32) are done lazily inside the Windows functions so this
@@ -174,8 +176,17 @@ def printer_status(printer_name: str = "") -> dict:
     return _status_win(printer_name) if _IS_WINDOWS else _status_lp(printer_name)
 
 
-# ── PixCut S1 (Liene-app UI automation) backend — macOS only ─────────────────
+# ── PixCut S1 (Liene-app UI automation) backend — macOS + Windows ────────────
 def _liene_running() -> bool:
+    """Is the Liene Photo app running? macOS: the 'Liene Photo' process; Windows:
+    liene_photo_pc.exe."""
+    if _IS_WINDOWS:
+        try:
+            out = subprocess.run(["tasklist", "/fi", "imagename eq liene_photo_pc.exe"],
+                                 capture_output=True, text=True, timeout=8)
+            return "liene_photo_pc.exe" in out.stdout.lower()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
     try:
         r = subprocess.run(["pgrep", "-f", "Contents/MacOS/Liene Photo"],
                            capture_output=True, text=True, timeout=5)
@@ -217,11 +228,46 @@ def restart_liene_app(wait_sec: float = 30.0) -> bool:
     return False
 
 
+def print_via_pixcut_win(path: str, pcfg) -> tuple[bool, str]:
+    """Print on the PixCut S1 on WINDOWS by driving the Liene Photo app via pixcut_win.py
+    (WebView2 CDP + SendInput). The script restarts the app itself for a clean start each run
+    and returns to home afterwards, so no restart-counter bookkeeping is needed here. Drives
+    the GUI (takes over the screen) and can take 2-3 min. `pcfg` is a PixcutCfg."""
+    script = _PROJECT_ROOT / "pixcut-probe" / "pixcut_win.py"
+    if not script.exists():
+        return False, f"pixcut_win.py 未找到: {script}"
+    sub = "dryrun" if getattr(pcfg, "dry_run", False) else "print"
+    cmd = [sys.executable, str(script), sub, str(path)]
+    if pcfg.margin_in:
+        cmd += ["--margin", str(pcfg.margin_in)]
+    # generous timeout: app restart (~30s) + upload/fit (~30s) + 切割预览 poll (~40s) +
+    # print + job polling. wait_done inside the script caps at 300s.
+    timeout = max(pcfg.timeout_sec, 480.0)
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        return False, f"无法执行 python 解释器 {sys.executable}"
+    except subprocess.TimeoutExpired:
+        return False, f"PixCut(Windows) 打印超时（{timeout:.0f}s）"
+    lines = [l for l in (out.stdout or "").splitlines() if l.strip()]
+    detail = lines[-1].strip() if lines else (out.stderr or "").strip()[-200:]
+    # pixcut_win.py prints "DRY-RUN COMPLETED" / "PRINT COMPLETED" on success (rc 0).
+    ok = out.returncode == 0 and ("COMPLETED" in (out.stdout or ""))
+    if not ok:
+        return False, detail or "pixcut_win.py 失败（见 logs\\cal_*.png）"
+    return True, detail
+
+
 def print_via_pixcut(path: str, pcfg) -> tuple[bool, str]:
-    """Print on the PixCut S1 by UI-automating the Liene Photo app via print_via_app.sh.
-    Drives the GUI (takes over the screen) and can take 1-2 min. macOS only. `pcfg` is a PixcutCfg."""
+    """Print on the PixCut S1 by UI-automating the Liene Photo app. Cross-platform: Windows
+    dispatches to pixcut_win.py, macOS to print_via_app.sh. Drives the GUI (takes over the
+    screen) and can take 1-3 min. `pcfg` is a PixcutCfg."""
+    if _IS_WINDOWS:
+        if not _liene_running():
+            return False, "Liene Photo 未运行，请先打开并登录 App（极印 Photo）"
+        return print_via_pixcut_win(path, pcfg)
     if not _IS_MAC:
-        return False, "pixcut 后端仅支持 macOS；Windows/Linux 请用 backend: system"
+        return False, "pixcut 后端仅支持 macOS 和 Windows；Linux 请用 backend: system"
     script = Path(pcfg.script)
     if not script.is_absolute():
         script = _PROJECT_ROOT / script
@@ -275,8 +321,9 @@ def print_output(path: str, printing_cfg) -> tuple[bool, str]:
 def backend_status(printing_cfg) -> dict:
     """Connection/health for the configured backend (PixCut = is the Liene app running)."""
     if getattr(printing_cfg, "backend", "system") == "pixcut":
-        if not _IS_MAC:
-            return {"connected": False, "ok": False, "state": "pixcut 仅 macOS", "name": "PixCut S1"}
+        if not (_IS_MAC or _IS_WINDOWS):
+            return {"connected": False, "ok": False, "state": "pixcut 仅 mac/Windows",
+                    "name": "PixCut S1"}
         if _liene_running():
             return {"connected": True, "ok": True, "state": "就绪 (PixCut)", "name": "PixCut S1"}
         return {"connected": False, "ok": False, "state": "Liene App 未运行", "name": "PixCut S1"}

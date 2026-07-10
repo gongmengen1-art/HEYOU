@@ -26,7 +26,8 @@ Customer arrives  →  📷 Recognize regular  →  🗓 Once per day  →  🎨
 
 ## 📋 Recent Updates
 
-- ✅ **2026-06-29** **Windows 10 support**: one cross-platform codebase; the print backend is chosen by OS — Windows uses the system printer (`win32print`), macOS keeps the PixCut UI-automation; the camera uses DirectShow on Windows. See [docs/WINDOWS.md](docs/WINDOWS.md).
+- ✅ **2026-07-10** **Windows PixCut real printing works**: the `pixcut` backend is now **cross-platform** — Windows can also drive the official Liene app for real output (AI figurine sticker filled to 4×7 paper and die-cut), completing the fully-automated recognize → generate → print loop. It's a **hybrid driver**: the official app is a Flutter shell + WebView2 web hybrid where synthesized mouse/keyboard is ignored by the web but works on Flutter — so the home web page is clicked via the **Chrome DevTools Protocol (CDP)** and the Flutter editor via **SendInput** pixel clicks; upload goes through the native file dialog, sizing via the "Advanced (mm)" fields to fill the sheet, the cut preview is awaited by polling, and it returns home after each print. Driver: `pixcut-probe/pixcut_win.py`; details in [docs/WINDOWS.md](docs/WINDOWS.md).
+- ✅ **2026-06-29** **Windows 10 support**: one cross-platform codebase; the print backend is chosen by OS — Windows can use the system printer (`win32print`) or the PixCut UI-automation; the camera uses DirectShow on Windows. See [docs/WINDOWS.md](docs/WINDOWS.md).
 - ✅ **2026-06-23** Printing upgraded to the **Liene PixCut S1 cut-printer**: real printing by driving the official app, with **AI die-cut** (sticker cut along the subject's contour) or plain full-bleed printing, switchable in config; the print backend toggles between `lp` (system CUPS printer) and `pixcut` (PixCut S1). Added a **debug mode** (runs the whole print flow but never clicks "Cut" — no print, no ribbon, logs success) and **continuous-print self-healing** (restart the print app every N prints to clear accumulated canvases / avoid tab buildup).
 - ✅ **2026-06-23** Log hygiene: service logs now **rotate by size** into `data/logs/` (default 5MB×5 ≈ 25MB cap, oldest auto-deleted) plus an age-based prune on startup — **so long runs never fill the disk**; the print path also cleans up the print app's own accumulated logs.
 - ✅ **2026-06-05** "Standing figurine" template fix: removed stray shoes, force full-body output with a built-in round base, and added exclude-tags to the auto-tagger (blocking "half-body / held-object" tags from polluting the template) — fixing the "half-body output, stray props" issue.
@@ -105,7 +106,7 @@ uv run python scripts/smoke_test.py
 
 After launch: enroll regulars' photos on the **Enroll** tab → recognition triggers automatically when they arrive → view results, regenerate, or manually print on the **Regulars** tab.
 
-> 🪟 **Windows 10**: the same codebase runs on Windows (printing via the system printer, camera via DirectShow) — see **[docs/WINDOWS.md](docs/WINDOWS.md)** for setup and printer configuration.
+> 🪟 **Windows 10**: the same codebase runs on Windows (printing via the system printer *or* the PixCut die-cut UI-automation, camera via DirectShow) — see **[docs/WINDOWS.md](docs/WINDOWS.md)** for setup and printer configuration.
 
 ## ⚙️ Configuration
 
@@ -119,7 +120,7 @@ Global configuration lives in `config.yaml`.
 | `orchestration.daily_limit` | max generations per person per day (default `1`) |
 | `storage.history_retention_days` | days to keep generation history (default `3`) |
 | `printing.enabled` | auto-print toggle (currently `false`; manual print as fallback, enable once hardware is finalized) |
-| `printing.backend` | print backend: `system` (cross-platform OS printer: CUPS on mac/Linux, win32print on Windows) \| `pixcut` (macOS-only, drives the official app) |
+| `printing.backend` | print backend: `system` (cross-platform OS printer: CUPS on mac/Linux, win32print on Windows) \| `pixcut` (drives the official app for die-cut stickers, **mac + Windows**) |
 | `printing.pixcut.cutout` | PixCut: apply **AI die-cut** each print (sticker cut along the contour; consumes a die-cut credit) |
 | `printing.pixcut.dry_run` | PixCut **debug mode**: run the whole flow but never click "Cut" — no print, no ribbon, logs success |
 | `printing.pixcut.restart_every` | PixCut: restart the app every N prints to clear accumulated canvases (default `10`, `0` = off) |
