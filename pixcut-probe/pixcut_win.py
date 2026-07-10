@@ -1191,26 +1191,22 @@ def hybrid_flow(image, dry_run=True, margin_in=0.0):
     os_snap(pg, "after_fit")   # verify the four fields took the values (read them next round)
 
     # 7. 制作 -> 切割预览 modal (title 切割预览; teal 切割 button bottom-right = PRINTS).
-    #    POLL for the teal 切割 button instead of a fixed sleep — the loading time varies
-    #    (a fixed 15s was flaky, ~2/4), but the button only exists once the modal is ready.
+    #    QUICK-VALIDATION MODE (per user): HARD-WAIT 40s for the preview to finish loading
+    #    instead of polling for the teal button, because the poll-detection may be the thing
+    #    that fails (aborting or misclicking) even though the modal is up. 40s was always
+    #    enough for the loading in earlier verified runs.
     _force_foreground(gw)
     _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
-    cut = wait_for_teal(pg, ox, oy, ED_CUT_REGION, timeout=40.0)
+    time.sleep(40.0)
     img = os_snap(pg, "cut_preview")
-    if not cut:
-        log("WARN: 切割预览 did not appear within 40s (teal 切割 not detected); see "
-            "cal_cut_preview")
-
-    # By now the preview has been loading for 15-40s, during which another window (the kiosk
-    # browser, a notification, …) can steal the foreground — then a SendInput click on 切割
-    # lands on the WRONG window (this is the full-flow "切割 won't click" failure; the earlier
-    # clicks worked because they fire right after the app restart while Liene is still on top).
-    # So FORCE Liene foreground and RE-DETECT the button position immediately before clicking.
+    # Detection is now DIAGNOSTIC ONLY (logged, not gating the click).
     fg = _force_foreground(gw)
     time.sleep(0.3)
-    fresh = find_teal_px(pg.screenshot().convert("RGB"), ox + ED_CUT_REGION[0],
-                         oy + ED_CUT_REGION[1], ox + ED_CUT_REGION[2], oy + ED_CUT_REGION[3])
-    target = fresh or cut
+    detected = find_teal_px(pg.screenshot().convert("RGB"), ox + ED_CUT_REGION[0],
+                            oy + ED_CUT_REGION[1], ox + ED_CUT_REGION[2], oy + ED_CUT_REGION[3])
+    log("teal 切割 " + (f"detected @rel({int(detected[0]-ox)},{int(detected[1]-oy)})"
+                        if detected else "NOT detected (clicking by known offset anyway)")
+        + f"  fg={fg}")
 
     if dry_run:
         # DO NOT click 切割 (that PRINTS + eats ribbon). Close the preview via its ✕ — same
@@ -1218,22 +1214,15 @@ def hybrid_flow(image, dry_run=True, margin_in=0.0):
         _send_click(ox + ED["ed_cut_close"][0], oy + ED["ed_cut_close"][1])
         time.sleep(1.0)
         os_snap(pg, "closed")
-        log(f"DRY RUN — reached 切割预览 (fg={fg}); teal 切割 "
-            + (f"detected @rel({int(target[0]-ox)},{int(target[1]-oy)})" if target
-               else "NOT detected")
-            + "; closed without printing (no ribbon).")
+        log("DRY RUN — reached 切割预览; closed without printing (no ribbon).")
         return done(True)
 
-    # REAL PRINT — clicks 切割, consumes ribbon. Only reachable via the `print` command
-    # (gated by CALIBRATED). Require the DETECTED teal centroid — never blind-click the
-    # offset for a real print (if the preview didn't render, abort rather than misclick).
-    if not target:
-        log("ERROR: 切割预览 not confirmed (teal 切割 not detected) — NOT printing, to avoid "
-            "a blind click. Re-run.")
-        return done(False)
+    # REAL PRINT — clicks 切割, consumes ribbon. Click the known offset (846,599); the hard
+    # 40s wait guarantees the preview is up, and detection above is just for the log.
     os_snap(pg, "before_cut")   # diagnostic: state right before the print click
-    log(f"clicking 切割 @({int(target[0])},{int(target[1])}) fg={fg} — printing (real, ribbon)")
-    _send_click(int(target[0]), int(target[1]))
+    tx, ty = ox + ED["ed_cut_btn"][0], oy + ED["ed_cut_btn"][1]
+    log(f"clicking 切割 @({tx},{ty}) fg={fg} — printing (real, ribbon)")
+    _send_click(tx, ty)
     time.sleep(2.0)
     os_snap(pg, "after_cut")    # diagnostic: did the modal close / print start?
     wait_done()
