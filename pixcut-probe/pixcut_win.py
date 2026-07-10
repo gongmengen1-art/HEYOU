@@ -924,8 +924,11 @@ ED = {
     "fld_x":             (1099, 556), # 高级(mm) X field
     "fld_y":             (1193, 556), # 高级(mm) Y field
     "ed_make_btn":       (1243, 52),  # editor top-right: teal 制作 (VERIFIED, pale teal)
+    "ed_cut_btn":        (846, 599),  # 切割预览 modal: teal 切割 = PRINTS (VERIFIED 捕获.PNG)
+    "ed_cut_close":      (863, 156),  # 切割预览 modal: close ✕
 }
 ED_APPLY_REGION = (560, 630, 900, 685)    # rel region of the teal 应用 (效果图 modal bottom)
+ED_CUT_REGION = (770, 572, 910, 628)      # rel region of the teal 切割 (切割预览 bottom-right)
 # The 高级 panel is in MILLIMETRES on Windows (mac used inches). 4x7in canvas = 101.6 x 177.8 mm.
 CANVAS_W_MM, CANVAS_H_MM = 101.6, 177.8
 ED_MAKE_REGION = (1150, 30, 1290, 75)     # rel region of the teal 制作 button
@@ -1027,10 +1030,10 @@ def hybrid_flow(image, dry_run=True):
 
     def done(ok):
         log("=" * 60)
-        log(("CHECKPOINT REACHED" if ok else "FAILED") + " — calibration build; the "
-            "remaining steps get wired from these snaps.")
+        tag = ("DRY-RUN" if dry_run else "PRINT")
+        log(f"{tag} {'COMPLETED' if ok else 'FAILED'}")
         log(f"{len(SNAPS)} step screenshots:")
-        for tag, path in SNAPS:
+        for t, path in SNAPS:
             log(f"  {path}")
         log("-> send me ALL logs\\cal_*.png plus this console output.")
         return ok
@@ -1162,14 +1165,37 @@ def hybrid_flow(image, dry_run=True):
     time.sleep(10.0)           # fixed wait for the resize to re-render
     os_snap(pg, "after_fit")   # verify the four fields took the values (read them next round)
 
-    # 7. 制作 -> 切割预览. Fixed 10s wait for the loading, then snap (the color-based loading
-    #    detector was unreliable; a hardcoded wait is what the user wants here). SNAP ONLY —
-    #    nothing in the preview is clicked (the 切割 offset gets measured from this snap).
+    # 7. 制作 -> 切割预览 modal (title 切割预览; teal 切割 button bottom-right = PRINTS).
+    #    Hard 15s wait for the modal to finish loading, then snap + verify by teal detection.
     _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
-    time.sleep(10.0)
-    os_snap(pg, "cut_preview")
-    log("CHECKPOINT 3 reached — uploaded, placed via 应用, fit W/H/X/Y (mm), 制作 clicked, "
-        "waited 10s, preview snapped, NOTHING in the preview clicked (no ribbon).")
+    time.sleep(15.0)
+    img = os_snap(pg, "cut_preview")
+    cut = find_teal_px(img, ox + ED_CUT_REGION[0], oy + ED_CUT_REGION[1],
+                       ox + ED_CUT_REGION[2], oy + ED_CUT_REGION[3])
+    if not cut:
+        log("WARN: teal 切割 not found in the preview region — the modal may still be "
+            "loading or the offset needs a nudge (see cal_cut_preview)")
+
+    if dry_run:
+        # DO NOT click 切割 (that PRINTS + eats ribbon). Close the preview via its ✕.
+        _send_click(ox + ED["ed_cut_close"][0], oy + ED["ed_cut_close"][1])
+        time.sleep(1.0)
+        os_snap(pg, "closed")
+        log("DRY RUN — reached 切割预览; teal 切割 "
+            + (f"detected @rel({int(cut[0]-ox)},{int(cut[1]-oy)})" if cut else "NOT detected")
+            + "; closed without printing (no ribbon).")
+        return done(True)
+
+    # REAL PRINT — clicks 切割, consumes ribbon. Only reachable via the `print` command
+    # (gated by CALIBRATED). Prefer the detected teal centroid, else the measured offset.
+    if cut:
+        _send_click(int(cut[0]), int(cut[1]))
+    else:
+        _send_click(ox + ED["ed_cut_btn"][0], oy + ED["ed_cut_btn"][1])
+    log("clicked 切割 — printing")
+    wait_done()
+    time.sleep(1.0)
+    os_snap(pg, "after_print")
     return done(True)
 
 
