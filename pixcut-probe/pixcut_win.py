@@ -219,12 +219,54 @@ def _send_click(x, y):
 
 
 def _send_dblclick(x, y):
-    """SendInput double-click at absolute coords (two down/up pairs). Used to put a Flutter
-    numeric field into text-edit mode + select its value (a single programmatic click only
-    places the caret and leaves the field uneditable)."""
+    """SendInput double-click at absolute coords (two down/up pairs)."""
     _send_click(x, y)
     time.sleep(0.08)
     _send_click(x, y)
+
+
+def _send_tripleclick(x, y):
+    """SendInput triple-click — selects ALL text in a field (double-click only grabs a
+    'word', and '22.9' splits on the dot)."""
+    _send_click(x, y)
+    time.sleep(0.06)
+    _send_click(x, y)
+    time.sleep(0.06)
+    _send_click(x, y)
+
+
+def _force_foreground(gw):
+    """Force the Liene window to the foreground so injected KEYBOARD reaches it. A plain
+    win.activate()/SetForegroundWindow is silently blocked by Windows' focus-stealing
+    prevention when our terminal owns the foreground; AttachThreadInput lifts that block.
+    (Injected MOUSE hits whatever's under the cursor regardless — only keyboard needs this.)"""
+    win = find_liene_window(gw)
+    if win is None:
+        return False
+    import ctypes
+    u = ctypes.windll.user32
+    hwnd = getattr(win, "_hWnd", None)
+    if not hwnd:
+        try:
+            win.activate()
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+    fg = u.GetForegroundWindow()
+    t_fg = u.GetWindowThreadProcessId(fg, None)
+    t_tg = u.GetWindowThreadProcessId(hwnd, None)
+    attached = u.AttachThreadInput(t_fg, t_tg, True)
+    try:
+        u.ShowWindow(hwnd, 9)          # SW_RESTORE
+        u.BringWindowToTop(hwnd)
+        u.SetForegroundWindow(hwnd)
+        u.SetActiveWindow(hwnd)
+        u.SetFocus(hwnd)
+    finally:
+        if attached:
+            u.AttachThreadInput(t_fg, t_tg, False)
+    time.sleep(0.25)
+    return u.GetForegroundWindow() == hwnd
 
 
 def _post_click(x, y):
@@ -940,28 +982,22 @@ def os_snap(pg, tag):
 
 
 def set_num_field(pg, gw, ox, oy, rel, value):
-    """Set a Flutter numeric field. A single click only placed the caret (the value never
-    changed: 22.9 stayed 22.9), so: bring the window forward, DOUBLE-CLICK the field to enter
-    edit mode + select its number, then Ctrl+A + Delete to clear, typewrite the new digits
-    (pure ASCII digits/'.' — no IME involvement), and Enter to commit."""
-    win = find_liene_window(gw)
-    if win is not None:
-        try:
-            win.activate()
-        except Exception:  # noqa: BLE001
-            pass
-    time.sleep(0.2)
+    """Set a Flutter numeric field. Earlier attempts (single-click+paste, double-click+type)
+    both left 22.9 unchanged. The file dialog proved injected keyboard WORKS when the target
+    is foreground — so the field never had keyboard focus. Fix: FORCE the window foreground
+    (AttachThreadInput), TRIPLE-CLICK to select the whole value, then typewrite + Enter.
+    Returns whether the window was confirmed foreground (a False hints keyboard won't land)."""
+    fg_ok = _force_foreground(gw)
     x, y = ox + rel[0], oy + rel[1]
-    _send_dblclick(x, y)
+    _send_tripleclick(x, y)          # focus + select all text in the field
     time.sleep(0.3)
-    pg.hotkey("ctrl", "a")
-    time.sleep(0.15)
-    pg.press("delete")
-    time.sleep(0.15)
-    pg.typewrite(str(value), interval=0.06)
+    pg.hotkey("ctrl", "a")           # belt: select-all in case triple-click only placed caret
+    time.sleep(0.12)
+    pg.typewrite(str(value), interval=0.06)   # replaces the selection
     time.sleep(0.2)
     pg.press("enter")
     time.sleep(0.6)
+    return fg_ok
 
 
 def wait_file_dialog(gw, appear=True, timeout=10.0):
@@ -1118,21 +1154,22 @@ def hybrid_flow(image, dry_run=True):
     Y = (CANVAS_H_MM - H) / 2
     W, H, X, Y = round(W, 1), round(H, 1), round(X, 1), round(Y, 1)
     log(f"fit(mm): aspect={aspect:.3f} -> W={W} H={H} X={X} Y={Y}")
-    set_num_field(pg, gw, ox, oy, ED["fld_w"], W)
+    fg = set_num_field(pg, gw, ox, oy, ED["fld_w"], W)
+    log(f"  window forced foreground for typing: {fg}")
     set_num_field(pg, gw, ox, oy, ED["fld_h"], H)
     set_num_field(pg, gw, ox, oy, ED["fld_x"], X)
     set_num_field(pg, gw, ox, oy, ED["fld_y"], Y)
-    time.sleep(5.0)            # fixed wait for the resize to re-render
+    time.sleep(10.0)           # fixed wait for the resize to re-render
     os_snap(pg, "after_fit")   # verify the four fields took the values (read them next round)
 
-    # 7. 制作 -> 切割预览. Fixed 5s wait for the loading, then snap (per user: the color-based
-    #    loading detector was unreliable; a hardcoded wait is what they want here). SNAP ONLY —
+    # 7. 制作 -> 切割预览. Fixed 10s wait for the loading, then snap (the color-based loading
+    #    detector was unreliable; a hardcoded wait is what the user wants here). SNAP ONLY —
     #    nothing in the preview is clicked (the 切割 offset gets measured from this snap).
     _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
-    time.sleep(5.0)
+    time.sleep(10.0)
     os_snap(pg, "cut_preview")
     log("CHECKPOINT 3 reached — uploaded, placed via 应用, fit W/H/X/Y (mm), 制作 clicked, "
-        "waited 5s, preview snapped, NOTHING in the preview clicked (no ribbon).")
+        "waited 10s, preview snapped, NOTHING in the preview clicked (no ribbon).")
     return done(True)
 
 
