@@ -218,6 +218,15 @@ def _send_click(x, y):
     return user32.SendInput(2, events, ctypes.sizeof(INPUT))
 
 
+def _send_dblclick(x, y):
+    """SendInput double-click at absolute coords (two down/up pairs). Used to put a Flutter
+    numeric field into text-edit mode + select its value (a single programmatic click only
+    places the caret and leaves the field uneditable)."""
+    _send_click(x, y)
+    time.sleep(0.08)
+    _send_click(x, y)
+
+
 def _post_click(x, y):
     """Click via PostMessage to the deepest window under the screen point (no cursor at all).
     Returns (hwnd, class_name) of the target window."""
@@ -883,43 +892,6 @@ ED_UPLOAD_REGION = (100, 84, 410, 126)    # rel region of the teal 上传图片 
 ED_CANVAS = (603, 172, 872, 679)          # rel rect of the white 4x7 canvas
 
 
-def make_loading(img, ox, oy):
-    """True while the app shows its colored-shapes LOADING skeleton over the canvas (teal
-    square + blue triangle + magenta circle + yellow hexagon). This skeleton is STATIC, so
-    frame-diff stabilization can't detect it — but its magenta+yellow are colors that never
-    appear in the normal editor, so presence of both = still loading. Shown both while a
-    resize re-renders and while 制作 generates the composite/cut path."""
-    px = img.load()
-    mag = yel = 0
-    for y in range(oy + 300, min(img.height, oy + 570), 3):
-        for x in range(ox + 560, min(img.width, ox + 960), 3):
-            r, g, b = px[x, y]
-            if r > 190 and g < 120 and 90 < b < 210:      # magenta circle
-                mag += 1
-            elif r > 210 and g > 165 and b < 115:         # yellow hexagon
-                yel += 1
-    return mag > 15 and yel > 15
-
-
-def wait_loading_clear(pg, ox, oy, label="", max_s=45.0, need_clear=2):
-    """Poll until the make_loading skeleton has been ABSENT for `need_clear` consecutive
-    frames (so a not-yet-started load isn't mistaken for done). Returns the last frame."""
-    clear = 0
-    img = None
-    t0 = time.time()
-    while time.time() - t0 < max_s:
-        img = pg.screenshot().convert("RGB")
-        if make_loading(img, ox, oy):
-            clear = 0
-        else:
-            clear += 1
-            if clear >= need_clear:
-                return img
-        time.sleep(1.3)
-    log(f"WARN: loading did not clear within {max_s:.0f}s{(' ('+label+')') if label else ''}")
-    return img
-
-
 def canvas_has_object(img, ox, oy, min_px=150):
     """True if the canvas rect contains enough non-white pixels (a placed object)."""
     px = img.load()
@@ -967,19 +939,29 @@ def os_snap(pg, tag):
     return img.convert("RGB")
 
 
-def set_num_field(pg, clip, ox, oy, rel, value):
-    """Focus a Flutter numeric field (SendInput click), select-all, paste the value, Enter.
-    Clipboard paste (not typewrite) keeps the decimal point away from any IME."""
-    _send_click(ox + rel[0], oy + rel[1])
-    time.sleep(0.35)
+def set_num_field(pg, gw, ox, oy, rel, value):
+    """Set a Flutter numeric field. A single click only placed the caret (the value never
+    changed: 22.9 stayed 22.9), so: bring the window forward, DOUBLE-CLICK the field to enter
+    edit mode + select its number, then Ctrl+A + Delete to clear, typewrite the new digits
+    (pure ASCII digits/'.' — no IME involvement), and Enter to commit."""
+    win = find_liene_window(gw)
+    if win is not None:
+        try:
+            win.activate()
+        except Exception:  # noqa: BLE001
+            pass
+    time.sleep(0.2)
+    x, y = ox + rel[0], oy + rel[1]
+    _send_dblclick(x, y)
+    time.sleep(0.3)
     pg.hotkey("ctrl", "a")
     time.sleep(0.15)
-    clip.copy(str(value))
+    pg.press("delete")
     time.sleep(0.15)
-    pg.hotkey("ctrl", "v")
-    time.sleep(0.15)
+    pg.typewrite(str(value), interval=0.06)
+    time.sleep(0.2)
     pg.press("enter")
-    time.sleep(0.45)
+    time.sleep(0.6)
 
 
 def wait_file_dialog(gw, appear=True, timeout=10.0):
@@ -1136,24 +1118,21 @@ def hybrid_flow(image, dry_run=True):
     Y = (CANVAS_H_MM - H) / 2
     W, H, X, Y = round(W, 1), round(H, 1), round(X, 1), round(Y, 1)
     log(f"fit(mm): aspect={aspect:.3f} -> W={W} H={H} X={X} Y={Y}")
-    set_num_field(pg, clip, ox, oy, ED["fld_w"], W)
-    set_num_field(pg, clip, ox, oy, ED["fld_h"], H)
-    set_num_field(pg, clip, ox, oy, ED["fld_x"], X)
-    set_num_field(pg, clip, ox, oy, ED["fld_y"], Y)
-    wait_loading_clear(pg, ox, oy, label="resize")   # the resize re-renders the large image
+    set_num_field(pg, gw, ox, oy, ED["fld_w"], W)
+    set_num_field(pg, gw, ox, oy, ED["fld_h"], H)
+    set_num_field(pg, gw, ox, oy, ED["fld_x"], X)
+    set_num_field(pg, gw, ox, oy, ED["fld_y"], Y)
+    time.sleep(5.0)            # fixed wait for the resize to re-render
     os_snap(pg, "after_fit")   # verify the four fields took the values (read them next round)
 
-    # 7. 制作 -> 切割预览. Clicking 制作 shows the (STATIC) colored-shapes loading skeleton
-    #    for several seconds while it generates the composite + cut path — wait for that to
-    #    CLEAR (not a frame-diff, which can't see a static skeleton) before snapping.
-    #    SNAP ONLY — nothing inside the preview is clicked (切割 offset measured from it).
+    # 7. 制作 -> 切割预览. Fixed 5s wait for the loading, then snap (per user: the color-based
+    #    loading detector was unreliable; a hardcoded wait is what they want here). SNAP ONLY —
+    #    nothing in the preview is clicked (the 切割 offset gets measured from this snap).
     _send_click(ox + ED["ed_make_btn"][0], oy + ED["ed_make_btn"][1])
-    time.sleep(2.5)
-    wait_loading_clear(pg, ox, oy, label="制作", max_s=60.0)
-    time.sleep(1.5)                                  # settle after the skeleton clears
+    time.sleep(5.0)
     os_snap(pg, "cut_preview")
-    log("CHECKPOINT 3 reached — uploaded, placed via 应用, fitted to 4x7 (mm), 制作 clicked, "
-        "loading cleared + preview snapped, NOTHING in the preview clicked (no ribbon).")
+    log("CHECKPOINT 3 reached — uploaded, placed via 应用, fit W/H/X/Y (mm), 制作 clicked, "
+        "waited 5s, preview snapped, NOTHING in the preview clicked (no ribbon).")
     return done(True)
 
 
