@@ -43,7 +43,15 @@ class RecognitionCfg(BaseModel):
     providers: list[str] = Field(default_factory=lambda: ["CPUExecutionProvider"])
     ctx_id: int = -1
     det_size: int = 640
-    match_threshold: float = 0.45
+    match_threshold: float = 0.45   # legacy single threshold (manual enroll / fallback)
+    # Auto-clustering uses a TWO-threshold band: sim >= match_high => same person (merge);
+    # sim < match_low => new person; in between => uncertain, skip (don't enroll/generate).
+    match_high: float = 0.50
+    match_low: float = 0.38
+    # Quality gate before a face is allowed to enroll/append/generate (keeps bad crops out
+    # of the auto-built library): min detector score and max head pose (pitch/yaw degrees).
+    enroll_min_det_score: float = 0.55
+    enroll_max_pose_deg: float = 35.0
     min_face_px: int = 90
     recognize_interval_sec: float = 0.4
     autostart: bool = True
@@ -53,6 +61,10 @@ class OrchestrationCfg(BaseModel):
     debounce_sec: float = 5.0
     daily_limit: int = 1
     gallery_reload_sec: float = 10.0
+    auto_enroll: bool = True            # auto-enroll ANY detected face (passerby) & cluster to a person
+    max_embeddings_per_person: int = 5  # cap the per-person feature library (0 = unlimited)
+    append_dup_sim: float = 0.90        # append a matched face only if it's < this similar to what we have
+    global_daily_cap: int = 0           # optional safety valve: max generations/day across everyone (0 = off)
 
 
 class ServerCfg(BaseModel):
@@ -84,6 +96,7 @@ class PrintingCfg(BaseModel):
 class StorageCfg(BaseModel):
     data_dir: str = "./data"
     history_retention_days: int = 3
+    visitor_retention_days: int = 30   # purge auto-enrolled visitors with no activity in N days (0 = keep)
 
 
 class LoggingCfg(BaseModel):
@@ -117,6 +130,10 @@ class Config(BaseModel):
         return self.data_path / "enrolled"
 
     @property
+    def visitors_dir(self) -> Path:
+        return self.data_path / "visitors"   # auto-enroll face crops
+
+    @property
     def output_dir(self) -> Path:
         return self.data_path / "outputs"
 
@@ -125,7 +142,8 @@ class Config(BaseModel):
         return self.data_path / "logs"
 
     def ensure_dirs(self) -> None:
-        for p in (self.data_path, self.enrolled_dir, self.output_dir, self.log_dir):
+        for p in (self.data_path, self.enrolled_dir, self.visitors_dir,
+                  self.output_dir, self.log_dir):
             p.mkdir(parents=True, exist_ok=True)
 
 

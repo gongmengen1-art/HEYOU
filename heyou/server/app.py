@@ -32,8 +32,11 @@ setup_logging(cfg)
 db.init_db(cfg.db_path)
 try:
     db.purge_old_history(cfg.db_path, cfg.storage.history_retention_days, cfg.output_dir)
+    n = db.purge_inactive_visitors(cfg.db_path, cfg.storage.visitor_retention_days)
+    if n:
+        log.info("purged %d inactive auto-enrolled visitor(s)", n)
 except Exception as e:  # noqa: BLE001
-    log.warning("history purge on startup failed: %s", e)
+    log.warning("history/visitor purge on startup failed: %s", e)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -190,11 +193,10 @@ async def api_enroll(name: str = Form(...), file: UploadFile = File(...)) -> dic
     if face is None:
         raise HTTPException(400, "未检测到人脸，请换一张清晰的正脸照")
     emb = np.asarray(face.normed_embedding, dtype=np.float32)
-    pid = db.add_person(cfg.db_path, name.strip(), emb, "")
+    pid = db.add_person(cfg.db_path, name.strip(), emb, "", source="enroll")
     photo_path = cfg.enrolled_dir / f"{pid}.jpg"
     cv2.imwrite(str(photo_path), img)
-    with db.connect(cfg.db_path) as conn:
-        conn.execute("UPDATE people SET photo_path=? WHERE id=?", (str(photo_path), pid))
+    db.set_person_photo(cfg.db_path, pid, photo_path)
     log.info("enrolled #%d %s", pid, name)
     return {"id": pid, "name": name.strip()}
 

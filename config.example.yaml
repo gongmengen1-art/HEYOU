@@ -28,7 +28,11 @@ recognition:
   providers: [CPUExecutionProvider]   # cross-platform CPU. mac Neural Engine: prepend CoreMLExecutionProvider. Windows GPU: install onnxruntime-directml and use DmlExecutionProvider
   ctx_id: -1
   det_size: 640
-  match_threshold: 0.45
+  match_threshold: 0.45         # legacy single threshold (manual enroll / fallback)
+  match_high: 0.50              # auto-cluster: sim >= this => same person (merge into their library)
+  match_low: 0.38               # auto-cluster: sim < this => new person; in between => skip (uncertain)
+  enroll_min_det_score: 0.55    # quality gate: min face-detector confidence to enroll/append
+  enroll_max_pose_deg: 35       # quality gate: max head pitch/yaw (degrees) to enroll/append
   min_face_px: 90
   recognize_interval_sec: 0.4
 
@@ -36,6 +40,10 @@ orchestration:
   debounce_sec: 5
   daily_limit: 1
   gallery_reload_sec: 10
+  auto_enroll: true             # auto-enroll ANY detected face (passerby) & cluster to a person
+  max_embeddings_per_person: 5  # cap each person's feature library (0 = unlimited)
+  append_dup_sim: 0.90          # only grow a person's library if the new face is < this similar
+  global_daily_cap: 0           # safety valve: max generations/day across everyone (0 = off)
 
 server:
   host: 127.0.0.1
@@ -57,6 +65,7 @@ printing:
 storage:
   data_dir: ./data
   history_retention_days: 3     # purge generation history + images older than N days
+  visitor_retention_days: 30    # purge auto-enrolled visitors with no activity in N days (0 = keep)
 
 logging:                        # rotating file logs under data_dir/logs, self-cleaning
   level: INFO

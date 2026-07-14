@@ -27,6 +27,7 @@ Customer arrives  →  📷 Recognize regular  →  🗓 Once per day  →  🎨
 
 ## 📋 Recent Updates
 
+- ✅ **2026-07-14** **Auto-enroll · cluster every face to a person**: no longer limited to pre-enrolled regulars — **any face that shows up is auto-enrolled**; each detected face is matched against the known database, merged into the **same person's feature library** if it's a returning face (more views → better recognition over time) or filed as a **new person** if not, then generated and printed as before (once per person per day). Includes a quality gate (rejects side/blurry faces), a two-threshold decision (fewer mismatches and duplicate records), a per-person library cap, automatic cleanup of inactive visitors, and an optional **global daily cap** for cost. Set `orchestration.auto_enroll` to `false` to serve only enrolled regulars.
 - ✅ **2026-07-14** **Full Windows parity**: real printing on the **Liene PixCut S1 with AI die-cut stickers** now works on Windows too, and the whole recognize → generate → print loop has been validated on real hardware. **Mac and Windows run the same code with identical features** — hands-free auto-printing on either; printer connection, cleanup, and continuous printing are all automated. Setup in [docs/WINDOWS.md](docs/WINDOWS.md).
 - ✅ **2026-06-29** **Windows 10 support**: the same codebase runs on Windows; printing can use the system printer or the official PixCut app, and the camera adapts automatically. See [docs/WINDOWS.md](docs/WINDOWS.md).
 - ✅ **2026-06-23** Printing upgraded to the **Liene PixCut S1 cut-printer**: real printing by driving the official app, with **AI die-cut** (sticker cut along the subject's contour) or plain full-bleed printing, switchable in config; the print backend toggles between `lp` (system CUPS printer) and `pixcut` (PixCut S1). Added a **debug mode** (runs the whole print flow but never clicks "Cut" — no print, no ribbon, logs success) and **continuous-print self-healing** (restart the print app every N prints to clear accumulated canvases / avoid tab buildup).
@@ -154,11 +155,11 @@ No staff action needed: recognition detects the regular → if not yet generated
 
 ## ❓ FAQ
 
-**Q: What about non-regulars (strangers)?**
-A: Only **enrolled regulars** trigger it; strangers are ignored — nothing is generated or printed.
+**Q: What about strangers (not pre-enrolled)?**
+A: By default it **auto-enrolls every face**: anyone who shows up is filed automatically, repeat visits are merged into one person (recognition improves as views accumulate), new faces create a new person, and it generates + prints as usual. To serve only pre-enrolled regulars, set `orchestration.auto_enroll` to `false`.
 
 **Q: Why only once per day per person?**
-A: It controls cloud cost and creates an "exclusive scarcity" that encourages return visits. The count is configurable in `config.yaml`.
+A: It controls cloud cost and creates an "exclusive scarcity" that encourages return visits. The count is configurable in `config.yaml`; you can also set `orchestration.global_daily_cap` as an all-users daily ceiling for cost safety.
 
 **Q: How close is the likeness?**
 A: InstantID + PuLID lock the facial features — **unmistakably them**; a random seed varies the pose and details each time — **same identity, never a repeat**.
@@ -167,7 +168,7 @@ A: InstantID + PuLID lock the facial features — **unmistakably them**; a rando
 A: It uses a high threshold and a "better to miss than to misidentify" policy; tune via `match_threshold`.
 
 **Q: How is privacy handled?**
-A: Face **embeddings** and portraits are stored **locally** in SQLite and never leave the machine; only the portrait is sent to RunningHub at generation time.
+A: Face **embeddings** and portraits are stored **locally** in SQLite and never leave the machine; only the portrait is sent to RunningHub at generation time. With auto-enroll on, in-venue faces are captured automatically; auto-enrolled visitors are purged after `storage.visitor_retention_days` (30 by default) of inactivity. For a real deployment, handle local notice/consent and retention compliance.
 
 **Q: Roughly how much does it cost?**
 A: Local recognition is free; each generation consumes RunningHub paid credits, capped at one per person per day — overall controllable. Use the `mock` backend for zero-cost self-testing.
