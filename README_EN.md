@@ -9,7 +9,8 @@
   <img src="https://img.shields.io/badge/Architecture-Edge_+_Cloud-4A90E2" alt="Architecture">
   <img src="https://img.shields.io/badge/Face_Recognition-InsightFace_ArcFace-EA4C89" alt="Recognition">
   <img src="https://img.shields.io/badge/Generation-RunningHub_ComfyUI-9B59B6" alt="Generation">
-  <img src="https://img.shields.io/badge/Platform-macOS_Python_3.11-50C878" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-macOS_·_Windows_10-50C878" alt="Platform">
+  <img src="https://img.shields.io/badge/Python-3.11-4A90E2" alt="Python">
 </p>
 
 When a regular walks in, the camera recognizes them and the system instantly generates a personalized cartoon figurine that's **unmistakably them — yet different every time**, then **prints it on the spot** as a keepsake to take home.
@@ -26,8 +27,8 @@ Customer arrives  →  📷 Recognize regular  →  🗓 Once per day  →  🎨
 
 ## 📋 Recent Updates
 
-- ✅ **2026-07-10** **Windows PixCut real printing works**: the `pixcut` backend is now **cross-platform** — Windows can also drive the official Liene app for real output (AI figurine sticker filled to 4×7 paper and die-cut), completing the fully-automated recognize → generate → print loop. It's a **hybrid driver**: the official app is a Flutter shell + WebView2 web hybrid where synthesized mouse/keyboard is ignored by the web but works on Flutter — so the home web page is clicked via the **Chrome DevTools Protocol (CDP)** and the Flutter editor via **SendInput** pixel clicks; upload goes through the native file dialog, sizing via the "Advanced (mm)" fields to fill the sheet, the cut preview is awaited by polling, and it returns home after each print. Driver: `pixcut-probe/pixcut_win.py`; details in [docs/WINDOWS.md](docs/WINDOWS.md).
-- ✅ **2026-06-29** **Windows 10 support**: one cross-platform codebase; the print backend is chosen by OS — Windows can use the system printer (`win32print`) or the PixCut UI-automation; the camera uses DirectShow on Windows. See [docs/WINDOWS.md](docs/WINDOWS.md).
+- ✅ **2026-07-14** **Full Windows parity**: real printing on the **Liene PixCut S1 with AI die-cut stickers** now works on Windows too, and the whole recognize → generate → print loop has been validated on real hardware. **Mac and Windows run the same code with identical features** — hands-free auto-printing on either; printer connection, cleanup, and continuous printing are all automated. Setup in [docs/WINDOWS.md](docs/WINDOWS.md).
+- ✅ **2026-06-29** **Windows 10 support**: the same codebase runs on Windows; printing can use the system printer or the official PixCut app, and the camera adapts automatically. See [docs/WINDOWS.md](docs/WINDOWS.md).
 - ✅ **2026-06-23** Printing upgraded to the **Liene PixCut S1 cut-printer**: real printing by driving the official app, with **AI die-cut** (sticker cut along the subject's contour) or plain full-bleed printing, switchable in config; the print backend toggles between `lp` (system CUPS printer) and `pixcut` (PixCut S1). Added a **debug mode** (runs the whole print flow but never clicks "Cut" — no print, no ribbon, logs success) and **continuous-print self-healing** (restart the print app every N prints to clear accumulated canvases / avoid tab buildup).
 - ✅ **2026-06-23** Log hygiene: service logs now **rotate by size** into `data/logs/` (default 5MB×5 ≈ 25MB cap, oldest auto-deleted) plus an age-based prune on startup — **so long runs never fill the disk**; the print path also cleans up the print app's own accumulated logs.
 - ✅ **2026-06-05** "Standing figurine" template fix: removed stray shoes, force full-body output with a built-in round base, and added exclude-tags to the auto-tagger (blocking "half-body / held-object" tags from polluting the template) — fixing the "half-body output, stray props" issue.
@@ -47,7 +48,7 @@ Customer arrives  →  📷 Recognize regular  →  🗓 Once per day  →  🎨
 | Online spread is hit-or-miss | A take-home physical card = a **social-sharing vehicle** that carries your brand (branded card template on the roadmap) |
 
 **For staff**: enroll a regular's photo once; everything after is automatic — with a "manual reprint" fallback when things get busy.
-**For owners**: runs on an ordinary Mac + a camera + a printer, with heavy compute in the cloud — **launch and validate with minimal investment**.
+**For owners**: runs on an ordinary computer (**Mac or Windows**) + a camera + a printer, with heavy compute in the cloud — **launch and validate with minimal investment**.
 
 ## ✨ Highlights
 
@@ -59,7 +60,8 @@ Customer arrives  →  📷 Recognize regular  →  🗓 Once per day  →  🎨
 - ✅ **Async generation, never blocks** — each ≈2.3 min cloud render is handled by a dedicated worker, **never blocking the camera loop**; in-flight & same-day guards.
 - ✅ **Edge + Cloud architecture** — the local Mac only runs recognition and scheduling; heavy generation lives in the cloud — **flexible, controllable compute cost**.
 - ✅ **Pluggable generation backend** — switch between `mock` (offline self-test, free) and `runninghub` (real generation) in one setting.
-- ✅ **Real printing · die-cut stickers** — supports the **Liene PixCut S1 cut-printer** (drives the official app, AI die-cut along the subject's contour) and system CUPS printers, switchable in one setting; includes a **debug mode** (runs the full flow without printing / consuming ribbon) and continuous-print self-healing.
+- ✅ **Real printing · die-cut stickers** — supports the **Liene PixCut S1 cut-printer** (AI die-cut along the subject's contour) and ordinary system printers, switchable in one setting, with **real printing on both Mac and Windows**; includes a **debug mode** (runs the full flow without printing / consuming ribbon) and continuous-print self-healing.
+- ✅ **Cross-platform parity** — the same code runs identically on **macOS and Windows 10**: recognition, generation, and printing are all validated end-to-end on real hardware.
 - ✅ **Status at a glance** — three top indicators: Recognition (one-click toggle) / Engine (cloud connectivity) / Printer (connected & ready; the PixCut backend shows whether the official app is online).
 
 ## 📊 How It Works
@@ -106,7 +108,7 @@ uv run python scripts/smoke_test.py
 
 After launch: enroll regulars' photos on the **Enroll** tab → recognition triggers automatically when they arrive → view results, regenerate, or manually print on the **Regulars** tab.
 
-> 🪟 **Windows 10**: the same codebase runs on Windows (printing via the system printer *or* the PixCut die-cut UI-automation, camera via DirectShow) — see **[docs/WINDOWS.md](docs/WINDOWS.md)** for setup and printer configuration.
+> 🪟 **Windows 10**: the same code runs on Windows with identical features (PixCut real printing or a system printer, camera adapts automatically) — see **[docs/WINDOWS.md](docs/WINDOWS.md)** for setup and printer configuration.
 
 ## ⚙️ Configuration
 
@@ -171,9 +173,9 @@ A: Face **embeddings** and portraits are stored **locally** in SQLite and never 
 A: Local recognition is free; each generation consumes RunningHub paid credits, capped at one per person per day — overall controllable. Use the `mock` backend for zero-cost self-testing.
 
 **Q: Any printer requirements?**
-A: Two backends, switched via `printing.backend` in `config.yaml`: `lp` uses a system CUPS printer (any system printer); `pixcut` drives the **Liene PixCut S1 cut-printer**'s official app, supporting **AI die-cut** stickers (cut along the subject's contour). To validate the whole chain without consuming ribbon, use `printing.pixcut.dry_run` (runs the full flow but doesn't really print). Auto-print (`printing.enabled`) is off by default with manual fallback, to be enabled once the on-site setup is finalized.
+A: Two backends, switched via `printing.backend` in `config.yaml`: `system` uses any OS printer (CUPS on mac/Linux, win32print on Windows); `pixcut` drives the **Liene PixCut S1 cut-printer**'s official app for **AI die-cut** stickers (cut along the subject's contour) and full-bleed prints — **works on both macOS and Windows**. To validate the whole chain without consuming ribbon, use `printing.pixcut.dry_run` (runs the full flow but doesn't really print). Auto-print (`printing.enabled`) is off by default with manual fallback, to be enabled once the on-site setup is finalized.
 
-> PixCut backend note: it prints by UI-automating the official Liene Photo app (which talks to the printer over Bluetooth), so that app must be open and signed in, and the terminal that launches the server needs Accessibility + Screen Recording permission; a print takes over the mouse/screen for 1–2 minutes.
+> PixCut backend note (Mac & Windows): it prints by automating the official PixCut app, so **that app must be open and signed in**; a print takes over the screen for 1–3 minutes — **don't touch the mouse/keyboard during it**. On macOS, first-time use needs Accessibility + Screen Recording permission for the terminal that launches the server; Windows needs no extra permission. Step-by-step setup in [docs/WINDOWS.md](docs/WINDOWS.md).
 
 ## 💎 Business Value & Moat
 
@@ -205,7 +207,7 @@ A: Two backends, switched via `printing.backend` in `config.yaml`: `lp` uses a s
 ### 🟢 Next Version (Planned)
 
 - **Branded card template** — composite **logo + customer nickname + date (+ QR code)** onto the output — a ready-to-share branded sticker/card
-- **Enable auto-print** — the PixCut S1 real-print chain is **already wired into the console** (with AI die-cut, debug mode, and continuous-print self-healing); flip `printing.enabled` on once the on-site setup is finalized for a hands-free "recognize → print" loop
+- **Enable auto-print** — the PixCut S1 real-print chain is **wired into the console on both Mac and Windows** (with AI die-cut, debug mode, and continuous-print self-healing); flip `printing.enabled` on once the on-site setup is finalized for a hands-free "recognize → print" loop
 - **ControlNet pose locking** — lock "full body + pose + base" with a full-body skeleton, **fully solving the occasional "half-body output" from front/half-body inputs**; pose templates become freely extensible
 - **Pose/style template library** — beyond standing and cross-legged, add more poses and **seasonal/themed skins**
 - **Monitoring platform + auth** — multi-device/remote view of runtime status, generation and print counts; owner login (the console is currently local and unauthenticated)
@@ -226,7 +228,7 @@ A: Two backends, switched via `printing.backend` in `config.yaml`: `lp` uses a s
 
 | Layer | Components |
 | --- | --- |
-| **Edge (macOS)** | InsightFace (buffalo_l: SCRFD + ArcFace, CPU/onnxruntime) · FastAPI console + async generation worker · SQLite (WAL) · printing: CUPS/`lp` system printer or Liene PixCut S1 (UI-automation of the official app, Bluetooth transport + AI die-cut) · size-rotating self-cleaning logs |
+| **Edge (macOS / Windows 10)** | InsightFace (buffalo_l: SCRFD + ArcFace, CPU/onnxruntime) · FastAPI console + async generation worker · SQLite (WAL) · printing: system printer (CUPS on mac/Linux, win32print on Windows) or Liene PixCut S1 (UI-automation of the official app, AI die-cut, identical on Mac & Windows) · camera adapts automatically (DirectShow on Windows) · size-rotating self-cleaning logs |
 | **Cloud (RunningHub)** | OpenAPI async REST · Cute You 2 workflow (PuLID + InstantID + IPAdapter + blind-box figurine LoRA) |
 | **Engineering** | uv / Python 3.11 · pydantic config · pluggable backend (`mock` \| `runninghub`) · centralized `config.yaml` (gitignored) |
 
@@ -237,6 +239,7 @@ A: Two backends, switched via `printing.backend` in `config.yaml`: `lp` uses a s
 - [x] Phase 1 on-device: camera recognition loop (sim ≈ 0.90–0.95, daily dedup works)
 - [x] **Phase 2** real cloud generation: full RunningHub pipeline (upload → create → inject portrait + random seed → poll → download, ≈2.3 min/image), async worker / same-day dedup / in-flight guard
 - [x] Phase 2 end-to-end on-device: recognize → real cartoon → print (output as expected)
+- [x] **Cross-platform**: identical features on macOS and Windows 10; PixCut real-print flow validated end-to-end on both
 - [x] Demo console: dark nightclub style (enroll / paginated regulars / state button / history / manual-print fallback / status monitoring)
 - [x] Pose templates: standing figurine, cross-legged (both with a base)
 - [ ] Next (see [Roadmap](#-roadmap)): branded card composition, enable auto-print, ControlNet pose locking, monitoring platform + auth, deployment hardware
