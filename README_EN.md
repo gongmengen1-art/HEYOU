@@ -2,10 +2,9 @@
 
 <p align="center"><a href="README.md">中文</a> | <b>English</b></p>
 
-<p align="center"><b>Bar regulars · Scan your face, get a personalized AI cartoon figurine · Printed on the spot</b></p>
+<p align="center"><b>Brick-and-mortar venues · Show your face, get a personalized AI cartoon figurine · Printed on the spot</b></p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Stage-MVP_Validated-50C878" alt="Stage">
   <img src="https://img.shields.io/badge/Architecture-Edge_+_Cloud-4A90E2" alt="Architecture">
   <img src="https://img.shields.io/badge/Face_Recognition-InsightFace_ArcFace-EA4C89" alt="Recognition">
   <img src="https://img.shields.io/badge/Generation-RunningHub_ComfyUI-9B59B6" alt="Generation">
@@ -13,63 +12,64 @@
   <img src="https://img.shields.io/badge/Python-3.11-4A90E2" alt="Python">
 </p>
 
-When a regular walks in, the camera recognizes them and the system instantly generates a personalized cartoon figurine that's **unmistakably them — yet different every time**, then **prints it on the spot** as a keepsake to take home.
+The moment a customer shows their face, the camera recognizes them and **auto-files them**, and the system instantly generates a personalized cartoon figurine that's **unmistakably them — yet different every time**, then **prints it on the spot** as a keepsake to take home. **No enrollment required** — when the same person visits again, the system automatically clusters those faces into one person in the background, getting more accurate and more like them over time.
 
 In short: turn a **face-scan** into a personalized, scarce, take-home, share-worthy surprise gift — a **memorable, shareable** differentiator for brick-and-mortar venues.
 
 ```text
-Customer arrives  →  📷 Recognize regular  →  🗓 Once per day  →  🎨 Cloud-generate personalized cartoon (same identity · never repeats)  →  🖨 Print keepsake on the spot
+Customer arrives → 📷 Recognize & auto-file on sight → 🧠 Cluster to a person (better with every visit) → 🗓 Once per person per day → 🎨 Cloud-generate personalized cartoon (same identity · never repeats) → 🖨 Print keepsake on the spot
 ```
 
-> 📖 **Reading guide** — Owners: [What it delivers](#-what-it-delivers-for-your-venue) · [Quick Start](#-quick-start) · [How to Use](#-how-to-use) · [FAQ](#-faq). Investors: [Value & Moat](#-business-value--moat) · [Roadmap](#-roadmap).
+> 📖 **Reading guide** — Owners: [What it delivers](#-what-it-delivers-for-your-venue) · [Quick Start](#-quick-start) · [FAQ](#-faq). Investors: [Value & Moat](#-business-value--moat).
 
 <!-- Tip: drop a console screenshot / a face-scan→print demo GIF here — most compelling -->
 
+## 🆕 Core Model: Get It on Sight, Regulars Emerge Automatically
+
+HEYOU is no longer an "**enroll first, then recognize**" regulars-gating system. The core flow now is:
+
+- **Everyone who shows up gets one** — any face in front of the camera is auto-filed and generated. Zero enrollment, zero staff action.
+- **Regulars are recognized by the system itself** — when the same person returns, their face is automatically **clustered into the same person** (many views per person, ever more accurate) — no tagging by staff.
+- **Once per person per day** — dedup is per *person*, controlling cost while creating a "come back for today's drop" scarcity.
+- **Pure-regulars mode still available** — to serve only pre-enrolled regulars, set `orchestration.auto_enroll` to `false`.
+
+> This is the **fundamental business-logic difference** from earlier versions: from "reward pre-enrolled regulars" to "get it on sight, with the regular relationship accreting automatically in the background."
+
 ## 📋 Recent Updates
 
-- ✅ **2026-07-14** **Auto-enroll · cluster every face to a person**: no longer limited to pre-enrolled regulars — **any face that shows up is auto-enrolled**; each detected face is matched against the known database, merged into the **same person's feature library** if it's a returning face (more views → better recognition over time) or filed as a **new person** if not, then generated and printed as before (once per person per day). Includes a quality gate (rejects side/blurry faces), a two-threshold decision (fewer mismatches and duplicate records), a per-person library cap, automatic cleanup of inactive visitors, and an optional **global daily cap** for cost. Set `orchestration.auto_enroll` to `false` to serve only enrolled regulars.
-- ✅ **2026-07-14** **Full Windows parity**: real printing on the **Liene PixCut S1 with AI die-cut stickers** now works on Windows too, and the whole recognize → generate → print loop has been validated on real hardware. **Mac and Windows run the same code with identical features** — hands-free auto-printing on either; printer connection, cleanup, and continuous printing are all automated. Setup in [docs/WINDOWS.md](docs/WINDOWS.md).
-- ✅ **2026-06-29** **Windows 10 support**: the same codebase runs on Windows; printing can use the system printer or the official PixCut app, and the camera adapts automatically. See [docs/WINDOWS.md](docs/WINDOWS.md).
-- ✅ **2026-06-23** Printing upgraded to the **Liene PixCut S1 cut-printer**: real printing by driving the official app, with **AI die-cut** (sticker cut along the subject's contour) or plain full-bleed printing, switchable in config; the print backend toggles between `lp` (system CUPS printer) and `pixcut` (PixCut S1). Added a **debug mode** (runs the whole print flow but never clicks "Cut" — no print, no ribbon, logs success) and **continuous-print self-healing** (restart the print app every N prints to clear accumulated canvases / avoid tab buildup).
-- ✅ **2026-06-23** Log hygiene: service logs now **rotate by size** into `data/logs/` (default 5MB×5 ≈ 25MB cap, oldest auto-deleted) plus an age-based prune on startup — **so long runs never fill the disk**; the print path also cleans up the print app's own accumulated logs.
-- ✅ **2026-06-05** "Standing figurine" template fix: removed stray shoes, force full-body output with a built-in round base, and added exclude-tags to the auto-tagger (blocking "half-body / held-object" tags from polluting the template) — fixing the "half-body output, stray props" issue.
-- ✅ **2026-06-04** New "Cross-legged" pose template: a precise pose tag (`indian style`) controls the seated pose; the base is rendered as part of the 3D output — no external overlay image needed.
-- ✅ **2026-06-03** Console upgrades: paginated regulars management, generation history (configurable retention), a "Generate / Regenerate" state button, and a **manual-print fallback**.
-- ✅ **2026-06-02** Dark "nightclub" demo console launched; face recognition auto-starts/stops with the server and auto-releases the camera during enrollment (avoiding conflicts).
-- ✅ **2026-06-01** Cloud pipeline live end-to-end on RunningHub (upload → create task → inject portrait + random seed → poll → download, ≈2.3 min per image); fixed Cute You 2's implicit wiring so it runs reliably via API.
-- ✅ **Late May 2026** Phase 1 face-recognition loop: InsightFace detection + ArcFace embeddings, cosine matching, daily dedup.
+- ✅ **2026-07-14** **Auto-enroll · cluster every face to a person**: no longer limited to pre-enrolled regulars — **any face that shows up is auto-filed**; each detected face is matched against the known database, merged into the **same person's feature library** if it's a returning face (more views → better recognition over time) or filed as a **new person** if not, then generated and printed as before (once per person per day). Includes a quality gate (rejects side/blurry faces), a **two-threshold decision** (fewer mismatches and duplicate records), a per-person library cap, automatic cleanup of inactive visitors, and an optional **global daily cap** for cost.
+- ✅ **2026-07-14** **Full Windows parity**: real printing on the **Liene PixCut S1 with AI die-cut stickers** now works on Windows too, and the whole recognize → generate → print loop has been validated on real hardware. **Mac and Windows run the same code with identical features** — hands-free auto-printing on either. Setup in [docs/WINDOWS.md](docs/WINDOWS.md).
+- ✅ **2026-06-23** Printing upgraded to the **Liene PixCut S1 cut-printer**: real printing by driving the official app, with **AI die-cut** (sticker cut along the subject's contour) or plain full-bleed printing; the print backend toggles between `system` (OS CUPS/win32print printer) and `pixcut` (PixCut S1). Includes a **debug mode** (runs the whole print flow but never clicks "Cut" — no print, no ribbon) and **continuous-print self-healing** (restart the print app every N prints to clear accumulated canvases).
 
 ## 🎯 What It Delivers for Your Venue
 
 | Pain point | How HEYOU solves it |
 | --- | --- |
 | Homogeneous experience, nothing memorable | A **personalized cartoon** that's unmistakably them and one-of-a-kind — perfect for photos and social check-ins |
-| No hook to bring regulars back | A **regulars-only, once-a-day** scarce gift that builds a "come back for today's drop" habit |
-| Campaigns are hard and costly to run | Enroll once, then **auto-recognize and auto-generate** — zero staff effort, zero learning curve |
+| No hook to bring customers back | A **get-it-on-sight, once-per-person-per-day** scarce gift — and the system recognizes returning customers automatically, building a "come back for today's drop" habit |
+| Campaigns are hard and costly to run | **Zero enrollment, zero action** — everyone who shows up is auto-recognized, auto-filed, auto-generated; staff never touch a button |
 | Online spread is hit-or-miss | A take-home physical card = a **social-sharing vehicle** that carries your brand (branded card template on the roadmap) |
 
-**For staff**: enroll a regular's photo once; everything after is automatic — with a "manual reprint" fallback when things get busy.
+**For staff**: zero action — customers are recognized, filed, and printed fully automatically; there's a "manual reprint" fallback when things get busy.
 **For owners**: runs on an ordinary computer (**Mac or Windows**) + a camera + a printer, with heavy compute in the cloud — **launch and validate with minimal investment**.
 
 ## ✨ Highlights
 
-- ✅ **Recognizes regulars** — InsightFace (SCRFD detection + ArcFace embeddings) + cosine matching; tunable threshold, "**better to miss than to misidentify**".
+- ✅ **Recognize on sight · auto-cluster to a person** — InsightFace (SCRFD detection + ArcFace embeddings) + cosine similarity; a **two-threshold** decision: merge into the same person if similar enough, create a new person if clearly not, skip if uncertain — "**better to miss than to misidentify**"; more views per person = ever more accurate.
 - ✅ **Same identity · never the same twice** — PuLID + InstantID lock the facial features (**unmistakably them**); a random seed makes **every render different** — no duplicates.
 - ✅ **Multiple pose templates** — "Standing figurine" and "Cross-legged" already supported, each with a display base; templates are extensible.
-- ✅ **Once per person per day** — automatic dedup; controls cost and creates scarcity (count configurable).
-- ✅ **Owner console (dark nightclub style)** — enroll / paginated management / generation history / one-click regenerate / **manual-print fallback** / live status.
+- ✅ **Once per person per day** — per-person dedup; controls cost and creates scarcity (count configurable, with a global daily cap as a backstop).
+- ✅ **Owner console (dark nightclub style)** — paginated visitor/regular management / manual enroll / generation history / one-click regenerate / **manual-print fallback** / live status.
 - ✅ **Async generation, never blocks** — each ≈2.3 min cloud render is handled by a dedicated worker, **never blocking the camera loop**; in-flight & same-day guards.
-- ✅ **Edge + Cloud architecture** — the local Mac only runs recognition and scheduling; heavy generation lives in the cloud — **flexible, controllable compute cost**.
+- ✅ **Edge + Cloud architecture** — the local computer only runs recognition and scheduling; heavy generation lives in the cloud — **flexible, controllable compute cost**.
 - ✅ **Pluggable generation backend** — switch between `mock` (offline self-test, free) and `runninghub` (real generation) in one setting.
 - ✅ **Real printing · die-cut stickers** — supports the **Liene PixCut S1 cut-printer** (AI die-cut along the subject's contour) and ordinary system printers, switchable in one setting, with **real printing on both Mac and Windows**; includes a **debug mode** (runs the full flow without printing / consuming ribbon) and continuous-print self-healing.
 - ✅ **Cross-platform parity** — the same code runs identically on **macOS and Windows 10**: recognition, generation, and printing are all validated end-to-end on real hardware.
-- ✅ **Status at a glance** — three top indicators: Recognition (one-click toggle) / Engine (cloud connectivity) / Printer (connected & ready; the PixCut backend shows whether the official app is online).
+- ✅ **Automatic visitor cleanup** — auto-filed visitors are purged after a configurable period of inactivity, so the feature library never grows unbounded (manually enrolled regulars are unaffected).
 
 ## 📊 How It Works
 
 <img src="static/images/ChatGPT_Image_202601_51_23.png" alt="How it works"/>
-
-A four-step loop: **recognize → daily dedup → identity-consistent + random generation → print on the spot.** Every step is configurable and swappable (recognition threshold, generation template, print toggle).
 
 ## 🖼 Examples
 
@@ -77,7 +77,7 @@ A four-step loop: **recognize → daily dedup → identity-consistent + random g
 
 <table>
 <tr>
-<td width="50%" align="center"><b>Real Photo (input)</b><br/><sub>enrolled regular's portrait</sub></td>
+<td width="50%" align="center"><b>Real Photo (input)</b><br/><sub>in-venue customer portrait</sub></td>
 <td width="50%" align="center"><b>Personalized Cartoon Figurine (output)</b><br/><sub>same identity · random every time</sub></td>
 </tr>
 <tr>
@@ -105,9 +105,12 @@ uv run python scripts/run_server.py
 
 # (optional) self-check before going live: recognition / DB / generation backend
 uv run python scripts/smoke_test.py
+
+# (optional) validate the "auto-enroll → cluster" decision logic (offline, no camera, free)
+uv run python scripts/smoke_autoenroll.py
 ```
 
-After launch: enroll regulars' photos on the **Enroll** tab → recognition triggers automatically when they arrive → view results, regenerate, or manually print on the **Regulars** tab.
+After launch: **customers are recognized, filed, generated, and printed automatically on arrival (once per person per day) — no enrollment needed**; in the console you can view results, regenerate, manually reprint, and also manually enroll/manage regulars.
 
 > 🪟 **Windows 10**: the same code runs on Windows with identical features (PixCut real printing or a system printer, camera adapts automatically) — see **[docs/WINDOWS.md](docs/WINDOWS.md)** for setup and printer configuration.
 
@@ -119,44 +122,22 @@ Global configuration lives in `config.yaml`.
 | --- | --- |
 | `generation.backend` | `mock` (offline self-test, free) \| `runninghub` (real cloud generation) |
 | `generation.runninghub.workflow_id` | which workflow (standing / cross-legged use different IDs) |
-| `recognition.match_threshold` | cosine similarity threshold; higher = stricter (better to miss than to misidentify) |
+| `orchestration.auto_enroll` | **Auto-enroll master switch** (default `true`): every in-venue face is auto-filed and clustered to a person; set `false` to fall back to the old "pre-enrolled regulars only" mode |
+| `recognition.match_high` · `match_low` | auto-cluster **two thresholds** (cosine similarity, higher = stricter): `≥ match_high` → same person, merge into their library; `< match_low` → new person; in between → uncertain, skip |
+| `recognition.min_face_px` · `enroll_min_det_score` · `enroll_max_pose_deg` | quality gates: min face pixels / min detection confidence / max pitch-yaw angle — loosen these to make recognition catch **more** faces |
 | `orchestration.daily_limit` | max generations per person per day (default `1`) |
+| `orchestration.global_daily_cap` | all-users daily generation ceiling for cost safety (`0` = unlimited) |
 | `storage.history_retention_days` | days to keep generation history (default `3`) |
+| `storage.visitor_retention_days` | purge auto-filed visitors after N days of inactivity (default `30`; manually enrolled regulars unaffected) |
 | `printing.enabled` | auto-print toggle (currently `false`; manual print as fallback, enable once hardware is finalized) |
-| `printing.backend` | print backend: `system` (cross-platform OS printer: CUPS on mac/Linux, win32print on Windows) \| `pixcut` (drives the official app for die-cut stickers, **mac + Windows**) |
-| `printing.pixcut.cutout` | PixCut: apply **AI die-cut** each print (sticker cut along the contour; consumes a die-cut credit) |
-| `printing.pixcut.dry_run` | PixCut **debug mode**: run the whole flow but never click "Cut" — no print, no ribbon, logs success |
-| `printing.pixcut.restart_every` | PixCut: restart the app every N prints to clear accumulated canvases (default `10`, `0` = off) |
-| `logging.max_bytes` · `backup_count` | service-log rotation size · kept rotations (default `5MB × 5` ≈ 25MB hard cap) |
-| `logging.retention_days` | prune logs older than N days on startup (default `7`, `0` = off) |
-
-## 💻 How to Use
-
-The console has two tabs — **Enroll** and **Regulars** — with three live status indicators on top.
-
-### Top status indicators
-- **Recognition** — online / paused / off (click to toggle)
-- **Engine** — RunningHub cloud connectivity
-- **Printer** — connected and ready or not
-
-### Enroll (add a regular)
-- Supports **drag-and-drop / click-to-upload / live capture** (capturing auto-pauses recognition to release the camera)
-- The system auto-detects the face, extracts embeddings, and stores them; one clear front-facing photo is enough
-
-### Regulars (day-to-day operations)
-- **Paginated list**, each regular showing their portrait; those generated today also show the latest cartoon
-- **State button**: not generated today → `Generate`; already generated → `Regenerate`; in progress → disabled
-- **Manual print**: a fallback when auto-print fails — reprint the latest output with one click
-- **Generation history**: view the last N days (retention configurable)
-- **Delete**: remove a regular and their portrait
-
-### Customer arrives (fully automatic)
-No staff action needed: recognition detects the regular → if not yet generated today, it auto-queues generation → (once auto-print is enabled) it prints automatically.
+| `printing.backend` | print backend: `system` (OS printer: CUPS on mac/Linux, win32print on Windows) \| `pixcut` (drives the official app for die-cut stickers, **mac + Windows**) |
+| `printing.pixcut.cutout` · `dry_run` · `restart_every` | AI die-cut (sticker cut along contour) / debug mode (full flow, no real print / ribbon) / restart the app every N prints to clear canvases |
+| `logging.max_bytes` · `backup_count` · `retention_days` | service-log rotation size · kept rotations · prune-on-startup age (default `5MB × 5` ≈ 25MB) |
 
 ## ❓ FAQ
 
-**Q: What about strangers (not pre-enrolled)?**
-A: By default it **auto-enrolls every face**: anyone who shows up is filed automatically, repeat visits are merged into one person (recognition improves as views accumulate), new faces create a new person, and it generates + prints as usual. To serve only pre-enrolled regulars, set `orchestration.auto_enroll` to `false`.
+**Q: What happens to people who aren't pre-enrolled?**
+A: This is exactly the point of the new version — by default it **auto-enrolls every face**: anyone who shows up is filed automatically, repeat visits are clustered into one person (recognition improves and looks more like them as views accumulate), new faces create a new person, and it generates + prints as usual. **No enrollment whatsoever.** To serve only pre-enrolled regulars, set `orchestration.auto_enroll` to `false`.
 
 **Q: Why only once per day per person?**
 A: It controls cloud cost and creates an "exclusive scarcity" that encourages return visits. The count is configurable in `config.yaml`; you can also set `orchestration.global_daily_cap` as an all-users daily ceiling for cost safety.
@@ -164,14 +145,14 @@ A: It controls cloud cost and creates an "exclusive scarcity" that encourages re
 **Q: How close is the likeness?**
 A: InstantID + PuLID lock the facial features — **unmistakably them**; a random seed varies the pose and details each time — **same identity, never a repeat**.
 
-**Q: Could it misidentify someone?**
-A: It uses a high threshold and a "better to miss than to misidentify" policy; tune via `match_threshold`.
+**Q: Could it misidentify someone / split one person into several?**
+A: Auto-clustering uses **two thresholds** (`recognition.match_high` / `match_low`): merge into an existing person only when similar enough, create a new person only when clearly different, and skip anything uncertain — "better to miss, or even file a duplicate, than to wrongly merge into someone else." Tune it via `match_high` / `match_low` and the quality gates (`min_face_px`, etc.). (Note: the legacy `match_threshold` is used only by the offline `smoke_test.py` — the live recognition path **does not read it**.)
 
 **Q: How is privacy handled?**
-A: Face **embeddings** and portraits are stored **locally** in SQLite and never leave the machine; only the portrait is sent to RunningHub at generation time. With auto-enroll on, in-venue faces are captured automatically; auto-enrolled visitors are purged after `storage.visitor_retention_days` (30 by default) of inactivity. For a real deployment, handle local notice/consent and retention compliance.
+A: Face **embeddings** and portraits are stored **locally** in SQLite and never leave the machine; only the portrait is sent to RunningHub at generation time. With auto-enroll on, in-venue faces are captured automatically; auto-filed visitors are purged after `storage.visitor_retention_days` (30 by default) of inactivity. For a real deployment, handle local notice/consent and retention compliance.
 
 **Q: Roughly how much does it cost?**
-A: Local recognition is free; each generation consumes RunningHub paid credits, capped at one per person per day — overall controllable. Use the `mock` backend for zero-cost self-testing.
+A: Local recognition is free; each generation consumes RunningHub paid credits, capped at one per person per day (with a global daily cap as a backstop) — overall controllable. Use the `mock` backend for zero-cost self-testing.
 
 **Q: Any printer requirements?**
 A: Two backends, switched via `printing.backend` in `config.yaml`: `system` uses any OS printer (CUPS on mac/Linux, win32print on Windows); `pixcut` drives the **Liene PixCut S1 cut-printer**'s official app for **AI die-cut** stickers (cut along the subject's contour) and full-bleed prints — **works on both macOS and Windows**. To validate the whole chain without consuming ribbon, use `printing.pixcut.dry_run` (runs the full flow but doesn't really print). Auto-print (`printing.enabled`) is off by default with manual fallback, to be enabled once the on-site setup is finalized.
@@ -182,65 +163,25 @@ A: Two backends, switched via `printing.backend` in `config.yaml`: `system` uses
 
 **Why now**
 
-- Mature generative AI + the rise of the offline experience economy — "scan your face, get a personalized IP" is finally low-friction to deploy
-- A venue only needs an ordinary Mac + camera + printer, with heavy compute in the cloud — **validate first, invest later**
+- Mature generative AI + the rise of the offline experience economy — "show your face, get a personalized IP" is finally low-friction to deploy
+- A venue only needs an ordinary computer + camera + printer, with heavy compute in the cloud — **validate first, invest later**
 
 **The hook**
 
-- **Personalized** (unmistakably them) × **Scarce** (once a day) × **Take-home** (physical card) × **Shareable** (social spread)
+- **Personalized** (unmistakably them) × **Scarce** (once per person per day) × **Take-home** (physical card) × **Shareable** (social spread)
+- **Zero-friction experience**: get it on sight — no QR scan, no signup, no staff enrollment
 
 **Technical moat (not "just a filter")**
 
 - **Identity-consistent, controllable, templated generation**: lock the face (InstantID/PuLID) + lock pose & base (prompt engineering, ControlNet next) + controlled randomness — "different every time, yet unmistakably them"
+- **Auto identity-clustering on sight**: two thresholds + quality gates + a multi-embedding library per person keep recognizing the same person ever more accurately with no manual tagging, while suppressing wrong merges and duplicate records
 - **Edge–cloud decoupling + pluggable backend**: switch scenes by swapping templates; flexible compute cost
-- **Productized end-to-end loop**: recognize → dedup → async generate → print, with scheduling, status monitoring and fallbacks — already validated on real hardware
+- **Productized end-to-end loop**: recognize → cluster → dedup → async generate → print, with scheduling, status monitoring and fallbacks — already validated on real hardware
 
 **Transferability**
 
-- The same engine ports to **restaurants / livehouses / expos / pop-ups / attractions / brand events** — a general "scan-to-personalized-avatar" capability
+- The same engine ports to **restaurants / livehouses / expos / pop-ups / attractions / brand events** — a general "get-a-personalized-avatar-on-sight" capability
 
 **Potential business models**
 
 - All-in-one hardware + consumables (stickers) + SaaS subscription / per-print revenue share; a unified multi-store platform for chains; venue-owned IP skins / collaborations / seasonal editions
-
-## 🔮 Roadmap
-
-### 🟢 Next Version (Planned)
-
-- **Branded card template** — composite **logo + customer nickname + date (+ QR code)** onto the output — a ready-to-share branded sticker/card
-- **Enable auto-print** — the PixCut S1 real-print chain is **wired into the console on both Mac and Windows** (with AI die-cut, debug mode, and continuous-print self-healing); flip `printing.enabled` on once the on-site setup is finalized for a hands-free "recognize → print" loop
-- **ControlNet pose locking** — lock "full body + pose + base" with a full-body skeleton, **fully solving the occasional "half-body output" from front/half-body inputs**; pose templates become freely extensible
-- **Pose/style template library** — beyond standing and cross-legged, add more poses and **seasonal/themed skins**
-- **Monitoring platform + auth** — multi-device/remote view of runtime status, generation and print counts; owner login (the console is currently local and unauthenticated)
-
-### 🟡 To Be Decided (after a demo round)
-
-- **Deployment hardware** — external camera (USB / IP), deployment PC (Mac / Windows), printer choice (color vs. **B&W thermal sticker** — thermal would need a line-art workflow swap)
-- **Throughput** — currently single cloud concurrency (limit = 1); decide a peak-time queuing / multi-concurrency strategy
-- **New-customer flow** — QR self-enrollment, first-visit onboarding
-
-### 🔵 Long-term Vision
-
-- Grow from "bar-regular gifts" into a **general "scan-to-personalized-IP" engine** spanning offline venues
-- Accumulate **visit-frequency / activity / retention** dashboards to power venue operations
-- **IP-ification and social virality**: venue-owned skins, collaborations, seasonal limited editions — shareable content assets
-
-## 🧱 Tech Architecture (for technical due diligence)
-
-| Layer | Components |
-| --- | --- |
-| **Edge (macOS / Windows 10)** | InsightFace (buffalo_l: SCRFD + ArcFace, CPU/onnxruntime) · FastAPI console + async generation worker · SQLite (WAL) · printing: system printer (CUPS on mac/Linux, win32print on Windows) or Liene PixCut S1 (UI-automation of the official app, AI die-cut, identical on Mac & Windows) · camera adapts automatically (DirectShow on Windows) · size-rotating self-cleaning logs |
-| **Cloud (RunningHub)** | OpenAPI async REST · Cute You 2 workflow (PuLID + InstantID + IPAdapter + blind-box figurine LoRA) |
-| **Engineering** | uv / Python 3.11 · pydantic config · pluggable backend (`mock` \| `runninghub`) · centralized `config.yaml` (gitignored) |
-
-## 📌 Progress
-
-- [x] Solution design & RunningHub API research
-- [x] **Phase 1** face-recognition loop: recognition / DB / enrollment web / mock output (`smoke_test.py`, `smoke_server.py` pass)
-- [x] Phase 1 on-device: camera recognition loop (sim ≈ 0.90–0.95, daily dedup works)
-- [x] **Phase 2** real cloud generation: full RunningHub pipeline (upload → create → inject portrait + random seed → poll → download, ≈2.3 min/image), async worker / same-day dedup / in-flight guard
-- [x] Phase 2 end-to-end on-device: recognize → real cartoon → print (output as expected)
-- [x] **Cross-platform**: identical features on macOS and Windows 10; PixCut real-print flow validated end-to-end on both
-- [x] Demo console: dark nightclub style (enroll / paginated regulars / state button / history / manual-print fallback / status monitoring)
-- [x] Pose templates: standing figurine, cross-legged (both with a base)
-- [ ] Next (see [Roadmap](#-roadmap)): branded card composition, enable auto-print, ControlNet pose locking, monitoring platform + auth, deployment hardware
