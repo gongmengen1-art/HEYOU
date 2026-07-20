@@ -25,6 +25,15 @@ from .recognition import FaceRecognizer, build_index, classify
 log = logging.getLogger("heyou.orchestrator")
 
 
+def _read_fail_hint() -> str:
+    import sys
+    if sys.platform.startswith("win"):
+        return ("check Settings → Privacy & security → Camera ('Let desktop apps access "
+                "your camera'), close apps holding the camera, try another device_index "
+                "— run: uv run python scripts/diag_camera.py")
+    return "close other apps using the camera and check camera.device_index"
+
+
 class Orchestrator:
     _MAX_PAUSE = 120.0  # auto-resume if a pause is never lifted (e.g. browser tab closed)
 
@@ -45,6 +54,9 @@ class Orchestrator:
         self._gallery_loaded_at = time.monotonic()
         self._last_seen: dict[int, float] = {}
         self._last_reco = 0.0
+        self._read_fails = 0                       # consecutive cap.read() failures (silent-stall guard)
+        self._last_read_warn = 0.0
+        self._got_frame = False                    # logged once when frames start flowing after an open
         self._gen_today = 0                       # generations enqueued today (for global cap)
         self._gen_today_date = db.today_str()
         self._stop = threading.Event()
@@ -222,6 +234,7 @@ class Orchestrator:
                     try:
                         cap = open_camera(self.cfg)
                         self.status, self.status_detail = "running", f"camera #{idx}"
+                        self._got_frame, self._read_fails = False, 0
                         log.info("recognition camera opened (#%d), %d enrolled", idx, len(self.gallery))
                     except Exception as e:  # noqa: BLE001
                         self.status, self.status_detail = "error", str(e)
@@ -231,9 +244,25 @@ class Orchestrator:
                         continue
 
                 ok, frame = cap.read()
-                if not ok:
+                if not ok or frame is None:
+                    self._read_fails += 1
+                    tnow = time.monotonic()
+                    if self._read_fails == 1 or tnow - self._last_read_warn > 5.0:
+                        self._last_read_warn = tnow
+                        self.status_detail = f"camera #{idx}: no frames"
+                        log.warning("camera #%d opened but read() failed (%d in a row) — no "
+                                    "frames, recognition can't trigger; %s",
+                                    idx, self._read_fails, _read_fail_hint())
                     time.sleep(0.05)
                     continue
+                if self._read_fails:
+                    log.info("camera #%d recovered after %d failed read(s)", idx, self._read_fails)
+                    self._read_fails = 0
+                if not self._got_frame:
+                    self._got_frame = True
+                    h, w = frame.shape[:2]
+                    self.status_detail = f"camera #{idx} ({w}x{h})"
+                    log.info("camera #%d delivering frames (%dx%d)", idx, w, h)
                 now = time.monotonic()
                 if now - self._last_reco < self.cfg.recognition.recognize_interval_sec:
                     time.sleep(min_interval)
