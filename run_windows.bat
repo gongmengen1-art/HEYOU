@@ -83,32 +83,37 @@ REM ---------- [4] run ----------
 REM Open the console to the LAN: bind 0.0.0.0 so other devices can reach it by this PC's IP.
 set "HEYOU_HOST=0.0.0.0"
 
+REM Resolve the server port from config.yaml via the real config loader (fallback 8000)
+set "PORT="
+for /f "usebackq delims=" %%P in (`uv run python -c "from heyou.config import load_config; print(load_config().server.port)" 2^>nul`) do set "PORT=%%P"
+if not defined PORT set "PORT=8000"
+
 REM Best-effort: detect this PC's LAN IPv4 (the adapter that has a default gateway and is Up)
 set "LANIP="
 for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "(Get-NetIPConfiguration ^| Where-Object {$_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up'} ^| ForEach-Object { $_.IPv4Address.IPAddress } ^| Select-Object -First 1)"`) do set "LANIP=%%A"
 if not defined LANIP set "LANIP=<this-PC-LAN-IP>"
 
-REM Allow inbound TCP 8000 through Windows Firewall so LAN clients can connect
-netsh advfirewall firewall show rule name="HEYOU console 8000" >nul 2>&1
+REM Allow inbound TCP %PORT% through Windows Firewall so LAN clients can connect
+netsh advfirewall firewall show rule name="HEYOU console %PORT%" >nul 2>&1
 if errorlevel 1 (
-  echo [step] add firewall rule TCP 8000 inbound >> "%LOGFILE%"
-  netsh advfirewall firewall add rule name="HEYOU console 8000" dir=in action=allow protocol=TCP localport=8000 >> "%LOGFILE%" 2>&1
+  echo [step] add firewall rule TCP %PORT% inbound >> "%LOGFILE%"
+  netsh advfirewall firewall add rule name="HEYOU console %PORT%" dir=in action=allow protocol=TCP localport=%PORT% >> "%LOGFILE%" 2>&1
   if errorlevel 1 (
     echo       NOTE: firewall rule NOT added -- run this .bat as Administrator ONCE to allow LAN access.
     echo [warn] firewall rule add failed ^(needs admin^) >> "%LOGFILE%"
   ) else (
-    echo       firewall opened: TCP 8000 inbound allowed.
+    echo       firewall opened: TCP %PORT% inbound allowed.
   )
 ) else (
-  echo       firewall rule already present ^(TCP 8000^).
+  echo       firewall rule already present ^(TCP %PORT%^).
 )
 
 echo [4/4] Starting server...
 echo(
 echo   ============================================
 echo    Console URLs:
-echo      this PC : http://127.0.0.1:8000
-echo      LAN     : http://%LANIP%:8000
+echo      this PC : http://127.0.0.1:%PORT%
+echo      LAN     : http://%LANIP%:%PORT%
 echo    Open the LAN URL from any device on the same network.
 echo    ^(No login yet -- only expose this on a trusted network.^)
 echo   ============================================
