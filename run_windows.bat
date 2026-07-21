@@ -80,19 +80,57 @@ if errorlevel 1 (
 echo       dependencies installed.
 
 REM ---------- [4] run ----------
-echo [4/4] Starting server...  open http://127.0.0.1:8000
-echo       * window stays here quietly = server RUNNING (good). Ctrl+C to stop.
-echo       * window returns to a prompt = startup FAILED; the error is in the log.
+REM Open the console to the LAN: bind 0.0.0.0 so other devices can reach it by this PC's IP.
+set "HEYOU_HOST=0.0.0.0"
+
+REM Best-effort: detect this PC's LAN IPv4 (the adapter that has a default gateway and is Up)
+set "LANIP="
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "(Get-NetIPConfiguration ^| Where-Object {$_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up'} ^| ForEach-Object { $_.IPv4Address.IPAddress } ^| Select-Object -First 1)"`) do set "LANIP=%%A"
+if not defined LANIP set "LANIP=<this-PC-LAN-IP>"
+
+REM Allow inbound TCP 8000 through Windows Firewall so LAN clients can connect
+netsh advfirewall firewall show rule name="HEYOU console 8000" >nul 2>&1
+if errorlevel 1 (
+  echo [step] add firewall rule TCP 8000 inbound >> "%LOGFILE%"
+  netsh advfirewall firewall add rule name="HEYOU console 8000" dir=in action=allow protocol=TCP localport=8000 >> "%LOGFILE%" 2>&1
+  if errorlevel 1 (
+    echo       NOTE: firewall rule NOT added -- run this .bat as Administrator ONCE to allow LAN access.
+    echo [warn] firewall rule add failed ^(needs admin^) >> "%LOGFILE%"
+  ) else (
+    echo       firewall opened: TCP 8000 inbound allowed.
+  )
+) else (
+  echo       firewall rule already present ^(TCP 8000^).
+)
+
+echo [4/4] Starting server...
+echo(
+echo   ============================================
+echo    Console URLs:
+echo      this PC : http://127.0.0.1:8000
+echo      LAN     : http://%LANIP%:8000
+echo    Open the LAN URL from any device on the same network.
+echo    ^(No login yet -- only expose this on a trusted network.^)
+echo   ============================================
+echo(
+echo       * live server logs print in THIS window (same as run_server.py). Ctrl+C to stop.
+echo       * window keeps printing logs = server RUNNING (good).
+echo       * window returns to a prompt = startup FAILED; the error is above and in the log.
 echo ------------------------------------------------------------ >> "%LOGFILE%"
-echo [step] starting server >> "%LOGFILE%"
-uv run python scripts\run_server.py >> "%LOGFILE%" 2>&1
+echo [step] starting server (HEYOU_HOST=%HEYOU_HOST%) -- runtime logs -^> data\logs\heyou.log >> "%LOGFILE%"
+
+REM Run the server with NO redirect so its output streams live in this window, exactly like
+REM `uv run python scripts\run_server.py`. The app also writes the full runtime log (clean
+REM UTF-8, self-rotating) to data\logs\heyou.log, and startup crashes are captured there too.
+uv run python scripts\run_server.py
 set "CODE=%ERRORLEVEL%"
 echo [exit] server exit code %CODE% >> "%LOGFILE%"
 
 echo(
-echo   Server stopped ^(exit %CODE%^). Full log:
-echo     %LOGFILE%
-echo   -^> send me that file to debug.
+echo   Server stopped ^(exit %CODE%^).
+echo   Setup log:   %LOGFILE%
+echo   Runtime log: data\logs\heyou.log
+echo   -^> send me those to debug.
 echo(
 pause
 exit /b %CODE%
