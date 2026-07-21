@@ -98,6 +98,49 @@ uv run python scripts\run_server.py
 Enroll a regular on the **Enroll** tab; on the **Regulars** tab you can generate and **manually
 print**. Flip `printing.enabled: true` for the hands-free recognize → generate → print loop.
 
+The window streams the **live server logs** (same output as `uv run python scripts\run_server.py`);
+the full runtime log is also written to `data\logs\heyou.log` (clean UTF-8, self-rotating), and
+the setup phase to `logs\run_<timestamp>.log`.
+
+## 4a. Open the console to other devices on the LAN
+
+`run_windows.bat` starts the console **open to your local network**, so a phone or another PC on
+the same Wi-Fi/LAN can use it. On launch it prints both addresses (the port comes from
+`config.yaml`):
+
+```text
+ Console URLs:
+   this PC : http://127.0.0.1:8000
+   LAN     : http://192.168.1.23:8000
+```
+
+Open the **LAN** URL from any device on the same network. What the launcher does for you:
+
+- **Binds to all interfaces** — sets `HEYOU_HOST=0.0.0.0` (instead of `127.0.0.1`) so the server
+  is reachable by this PC's LAN IP. To do it manually (without the `.bat`):
+  ```powershell
+  set HEYOU_HOST=0.0.0.0
+  uv run python scripts\run_server.py
+  ```
+- **Opens the firewall** — adds an inbound rule for the server's TCP port. If you see
+  `firewall rule NOT added -- run as Administrator ONCE`, right-click `run_windows.bat` →
+  **Run as administrator** one time (after the rule exists, a normal double-click is fine). A
+  manual run doesn't open the firewall — add it yourself once:
+  ```powershell
+  netsh advfirewall firewall add rule name="HEYOU console 8000" dir=in action=allow protocol=TCP localport=8000
+  ```
+- **Follows your port** — the firewall rule and both URLs use `server.port` from `config.yaml`
+  (default `8000`). Change the port there and the launcher adapts; each port gets its own
+  firewall rule, so run as admin once more after changing it.
+
+> **No login yet.** Anyone on the LAN who opens the URL can enroll faces and trigger generation.
+> Only expose it on a **trusted** network.
+
+**Other devices still can't connect?** Check, in order: (1) they're on the **same subnet** (all
+`192.168.1.x`); (2) the firewall rule was actually added (run as admin once); (3) the router
+isn't isolating clients — **AP isolation / guest network** blocks device-to-device traffic
+regardless of the firewall.
+
 ## Notes & differences from macOS
 
 - **Printing path** — Windows renders the image onto the printer's GDI device context, scaled
@@ -105,10 +148,20 @@ print**. Flip `printing.enabled: true` for the hands-free recognize → generate
   size, so set that to your sticker size.
 - **`pixcut` backend now works on Windows too** (§5) — it drives the official app for a real
   die-cut. Use `backend: system` only if you want the simpler plain-rectangle print.
-- **Camera** uses the DirectShow backend on Windows (more reliable than MSMF). If the camera
-  won't open: allow camera access in **Settings → Privacy & security → Camera** (including
-  "Let desktop apps access your camera"), close any app already using it, and check
-  `camera.device_index`.
+- **Camera** uses the DirectShow backend on Windows (more reliable than MSMF). The recognition
+  loop opens the camera by **`camera.device_index`** via OpenCV — this is *not* the browser's
+  camera, so a laptop with both a built-in and a USB webcam usually opens the **built-in
+  (index 0)**; set `camera.device_index: 1` (or `2`) to use the USB one. To find the right index
+  — or to diagnose "camera opens but recognition never triggers" (a DirectShow quirk where frames
+  never arrive) — run:
+  ```powershell
+  uv run python scripts\diag_camera.py --detect
+  ```
+  It probes each index/backend and reports open / frame delivery / all-black frames / a face
+  detection pass. If nothing delivers frames: allow camera access in **Settings → Privacy &
+  security → Camera** (including "Let desktop apps access your camera") and close any app already
+  using the camera. (The browser's camera picker only affects the **live-capture** button on the
+  Enroll page, not recognition.)
 - **GPU (optional, DirectML)** — for onnxruntime GPU acceleration on Windows:
   `uv pip uninstall onnxruntime && uv pip install onnxruntime-directml`, then set
   `recognition.providers: [DmlExecutionProvider, CPUExecutionProvider]`. CPU is fine for the
@@ -177,5 +230,7 @@ app window must stay at its normal size and not be minimized.
 | pixcut dry-run stalls / wrong clicks | Don't touch mouse/keyboard while it runs; keep the app window un-resized; check `logs\cal_*.png` |
 | `没有可用的系统打印机` | Install the printer driver; set it default or fill `printer_name` exactly |
 | Camera won't open | Privacy settings (above); close other apps; try another `device_index` |
+| Recognition never triggers (camera *does* open) | `uv run python scripts\diag_camera.py --detect` — usually the wrong `device_index` or frames never arrive; see the **Camera** note |
+| Other devices can't open the console | Same subnet? firewall rule added (run the `.bat` as admin once)? router **AP isolation / guest network** off? See **§4a** |
 | `onnxruntime` / InsightFace model download slow | First run downloads `buffalo_l` (~300MB) to `~/.insightface`; let it finish once |
 | Wrong physical print size | Set the **paper size** in the printer's Printing preferences (HEYOU fits-to-page) |
